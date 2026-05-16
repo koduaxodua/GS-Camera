@@ -1,0 +1,20 @@
+<!--
+  Insert into android/app/src/main/AndroidManifest.xml AFTER `flutter create`
+  generates the file. Adds camera + storage + sensors permissions and
+  declares the camera feature so Play filtering is correct.
+-->
+
+<!-- Inside <manifest> tag, BEFORE <application> -->
+<uses-permission android:name="android.permission.CAMERA" />
+<uses-permission android:name="android.permission.RECORD_AUDIO" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+    android:maxSdkVersion="29" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+    android:maxSdkVersion="32" />
+<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+
+<uses-feature android:name="android.hardware.camera" android:required="true" />
+<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+<uses-feature android:name="android.hardware.sensor.gyroscope" android:required="true" />
+<uses-feature android:name="android.hardware.sensor.accelerometer" android:required="true" />
+<uses-feature android:name="android.hardware.sensor.compass" android:required="false" />

@@ -1,0 +1,48 @@
+name: gs_camera
+description: Capture photos optimised for Gaussian Splatting reconstruction.
+publish_to: 'none'
+version: 0.1.0+1
+
+environment:
+  sdk: '>=3.4.0 <4.0.0'
+  flutter: '>=3.22.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # Sensors: gyroscope, accelerometer, magnetometer.
+  sensors_plus: ^6.0.1
+
+  # Vector + quaternion math used by sensor fusion + coverage map.
+  vector_math: ^2.1.4
+
+  # Permissions (camera, storage, sensors).
+  permission_handler: ^11.3.1
+
+  # Filesystem access for export to DCIM/.
+  path_provider: ^2.1.4
+
+  # Image utilities (in-memory ops, fallback paths).
+  image: ^4.2.0
+
+  # EXIF read/write for postshot ingest.
+  exif: ^3.3.0
+
+  # Share final session folder via Android share sheet.
+  share_plus: ^10.0.2
+
+  # Keep screen on during capture.
+  wakelock_plus: ^1.2.8
+
+  # Persisted preferences (last-used mode, advanced settings).
+  shared_preferences: ^2.3.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
