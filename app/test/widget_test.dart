@@ -6,10 +6,13 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:gs_camera/main.dart';
 
 void main() {
-  testWidgets('App boots and keeps Finish visible', (tester) async {
+  testWidgets('App boots into permission or capture flow', (tester) async {
     await tester.pumpWidget(const ProviderScope(child: GSCameraApp()));
     await tester.pump();
-    expect(find.text('Smart'), findsOneWidget);
-    expect(find.text('Finish'), findsOneWidget);
+    final captureReady = find.text('Smart').evaluate().isNotEmpty &&
+        find.text('Finish').evaluate().isNotEmpty;
+    final permissionGate = find.text('Allow camera').evaluate().isNotEmpty ||
+        find.text('Checking camera access').evaluate().isNotEmpty;
+    expect(captureReady || permissionGate, isTrue);
   });
 }

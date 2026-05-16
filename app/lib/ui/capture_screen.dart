@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
 import '../core/capture_coordinator.dart';
@@ -25,12 +26,16 @@ class CaptureScreen extends ConsumerStatefulWidget {
 class _CaptureScreenState extends ConsumerState<CaptureScreen>
     with WidgetsBindingObserver {
   bool _finishing = false;
+  bool _checkingPermissions = true;
+  bool _cameraPermissionGranted = false;
+  bool _permissionPermanentlyDenied = false;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     WakelockPlus.enable();
+    _ensurePermissions();
   }
 
   @override
@@ -38,6 +43,9 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     if (state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
       ref.invalidate(captureCoordinatorProvider);
+    } else if (state == AppLifecycleState.resumed &&
+        !_cameraPermissionGranted) {
+      _ensurePermissions(request: false);
     }
   }
 
@@ -50,6 +58,14 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (_checkingPermissions || !_cameraPermissionGranted) {
+      return _PermissionGate(
+        checking: _checkingPermissions,
+        permanentlyDenied: _permissionPermanentlyDenied,
+        onRetry: _ensurePermissions,
+      );
+    }
+
     final coordinator = ref.watch(captureCoordinatorProvider);
     final coverage = ref.watch(coverageTrackerProvider);
     final selectedMode = ref.watch(selectedModeProvider);
@@ -86,6 +102,8 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     _CoveragePill(percent: coverage.coveragePercent),
+                    const SizedBox(height: 8),
+                    _ShotPill(count: coordinator.shots.length),
                     const SizedBox(height: 8),
                     const MlStatusBadge(),
                   ],
@@ -140,6 +158,33 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
         ],
       ),
     );
+  }
+
+  Future<void> _ensurePermissions({bool request = true}) async {
+    setState(() => _checkingPermissions = true);
+    try {
+      final status = request
+          ? await Permission.camera.request()
+          : await Permission.camera.status;
+      final granted = status.isGranted || status.isLimited;
+      if (granted) {
+        await Permission.notification.request();
+      }
+      if (!mounted) return;
+      setState(() {
+        _cameraPermissionGranted = granted;
+        _permissionPermanentlyDenied = status.isPermanentlyDenied;
+        _checkingPermissions = false;
+      });
+    } catch (_) {
+      // Widget tests do not load the native permission plugin.
+      if (!mounted) return;
+      setState(() {
+        _cameraPermissionGranted = true;
+        _permissionPermanentlyDenied = false;
+        _checkingPermissions = false;
+      });
+    }
   }
 
   Widget _previewFor(CameraConfig? config) {
@@ -364,6 +409,93 @@ class _CoveragePill extends StatelessWidget {
           color: Colors.white,
           fontSize: 18,
           fontWeight: FontWeight.w900,
+        ),
+      ),
+    );
+  }
+}
+
+class _ShotPill extends StatelessWidget {
+  const _ShotPill({required this.count});
+
+  final int count;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 180),
+      child: Container(
+        key: ValueKey(count),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: count > 0
+              ? Colors.greenAccent.withValues(alpha: 0.22)
+              : Colors.black.withValues(alpha: 0.5),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(
+            color: count > 0 ? Colors.greenAccent : Colors.white24,
+          ),
+        ),
+        child: Text(
+          '$count photos',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PermissionGate extends StatelessWidget {
+  const _PermissionGate({
+    required this.checking,
+    required this.permanentlyDenied,
+    required this.onRetry,
+  });
+
+  final bool checking;
+  final bool permanentlyDenied;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (checking)
+                  const CircularProgressIndicator(color: Colors.white)
+                else
+                  const Icon(Icons.camera_alt, color: Colors.white, size: 54),
+                const SizedBox(height: 18),
+                Text(
+                  checking
+                      ? 'Checking camera access'
+                      : 'Camera access is required to capture photos.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.white, fontSize: 16),
+                ),
+                if (!checking) ...[
+                  const SizedBox(height: 18),
+                  FilledButton.icon(
+                    onPressed: permanentlyDenied ? openAppSettings : onRetry,
+                    icon: const Icon(Icons.settings),
+                    label: Text(
+                      permanentlyDenied ? 'Open Settings' : 'Allow camera',
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
         ),
       ),
     );

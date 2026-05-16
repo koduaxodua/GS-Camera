@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'dart:developer' as developer;
 import 'package:path_provider/path_provider.dart';
+import 'package:vector_math/vector_math_64.dart';
 
 import '../models/capture_mode.dart';
 import '../models/photo_meta.dart';
@@ -159,14 +160,29 @@ class CaptureCoordinator extends ChangeNotifier {
   }
 
   Future<void> forceCapture() async {
-    final sensor = _lastSensor;
-    if (sensor == null || _state != CaptureState.capturing) return;
+    if (_state != CaptureState.capturing) return;
+    final sensor = _lastSensor ?? _fallbackSensorSnapshot();
     // Force capture should always use the currently active camera and
     // should not implicitly switch lenses. This avoids stalls when a
     // desired lens (e.g. tele) isn't present.
     developer.log('forceCapture invoked on active=${_activeCamera.name}',
         name: 'gs_camera.capture');
     await _fireCapture(sensor, force: true);
+  }
+
+  SensorSnapshot _fallbackSensorSnapshot() {
+    developer.log(
+        'forceCapture using fallback pose because sensors are not ready yet',
+        name: 'gs_camera.capture');
+    return SensorSnapshot(
+      azimuthDeg: 0,
+      elevationDeg: 0,
+      rollDeg: 0,
+      angularSpeedDegPerSec: 0,
+      linearAccelMag: 0,
+      position: Vector3.zero(),
+      timestampMs: DateTime.now().millisecondsSinceEpoch,
+    );
   }
 
   void addMore() {
@@ -416,6 +432,9 @@ class CaptureCoordinator extends ChangeNotifier {
         camera: cameraLabel,
       );
       shots.add(meta);
+      developer.log(
+          'capture_saved count=${shots.length} camera=$cameraLabel path=$path',
+          name: 'gs_camera.capture');
       final recordedCamera = CameraLensType.fromExportName(cameraLabel);
       _activeCamera = recordedCamera;
       _lastYawByCamera[recordedCamera] = sensor.azimuthDeg;
