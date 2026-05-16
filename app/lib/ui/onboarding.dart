@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../core/app_strings.dart';
 import '../providers.dart';
 
 class OnboardingOverlay extends ConsumerStatefulWidget {
@@ -16,16 +17,20 @@ class _OnboardingOverlayState extends ConsumerState<OnboardingOverlay> {
   int _step = 0;
 
   static const _steps = [
-    (Icons.threesixty, 'Move slowly', 'Turn around and let the ring fill.'),
+    (
+      Icons.threesixty,
+      AppStrings.onboardingStep1Title,
+      AppStrings.onboardingStep1Desc
+    ),
     (
       Icons.center_focus_strong,
-      'Aim at gaps',
-      'Follow the simple hint in the center.'
+      AppStrings.onboardingStep2Title,
+      AppStrings.onboardingStep2Desc
     ),
     (
       Icons.file_upload_outlined,
-      'Leave export running',
-      'Progress continues in notifications.'
+      AppStrings.onboardingStep3Title,
+      AppStrings.onboardingStep3Desc
     ),
   ];
 
@@ -89,7 +94,9 @@ class _OnboardingOverlayState extends ConsumerState<OnboardingOverlay> {
                   onPressed: _step == _steps.length - 1
                       ? _done
                       : () => setState(() => _step++),
-                  child: Text(_step == _steps.length - 1 ? 'Got it' : 'Next'),
+                  child: Text(_step == _steps.length - 1
+                      ? AppStrings.onboardingGotIt
+                      : AppStrings.onboardingNext),
                 ),
               ],
             ),

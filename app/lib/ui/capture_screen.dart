@@ -1,9 +1,11 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
+import '../core/app_strings.dart';
 import '../core/capture_coordinator.dart';
 import '../core/coverage_tracker.dart';
 import '../models/capture_mode.dart';
@@ -292,7 +294,7 @@ class _ModeCard extends StatelessWidget {
                   Icon(icon, color: Colors.white, size: 18),
                   const SizedBox(width: 6),
                   Text(
-                    label,
+                    _localizedLabel(label),
                     style: const TextStyle(
                       color: Colors.white,
                       fontWeight: FontWeight.w800,
@@ -305,6 +307,10 @@ class _ModeCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _localizedLabel(String label) {
+    return AppStrings.getMode(label, 'en');
   }
 }
 

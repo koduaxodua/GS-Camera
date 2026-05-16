@@ -1,2 +1,34 @@
-# IDE (repo root)
+```
+# Dependencies
+.pub/
+.dart_tool/
+
+# Build artifacts
+build/
+*.apk
+*.aab
+*.app
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# IDE files
+.vscode/
 .idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+```
