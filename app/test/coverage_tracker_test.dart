@@ -51,4 +51,28 @@ void main() {
     expect(tracker.value.coveragePercent, 0);
     expect(tracker.needsQuality(4, 0, CaptureMode.room), isTrue);
   });
+
+  test('one main capture does not deadlock target bin', () {
+    final tracker = CoverageTracker();
+    addTearDown(tracker.dispose);
+
+    tracker.recordFrame(
+      mode: CaptureMode.room,
+      camera: CameraLensType.main,
+      azimuthDeg: 4,
+      elevationDeg: 0,
+      sharpness: 0.9,
+      textureScore: 0.5,
+      qualityAccepted: true,
+    );
+
+    final bin = tracker.binAt(
+      mode: CaptureMode.room,
+      azimuthDeg: 4,
+      elevationDeg: 0,
+    );
+    expect(bin.color, CoverageBinColor.orange);
+    expect(tracker.needsQuality(4, 0, CaptureMode.room), isTrue);
+    expect(tracker.value.coveragePercent, 0);
+  });
 }

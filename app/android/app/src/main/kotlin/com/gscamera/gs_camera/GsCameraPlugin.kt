@@ -2,17 +2,13 @@ package com.gscamera.gs_camera
 
 import android.app.Activity
 import android.content.Context
-import android.graphics.ImageFormat
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
-import android.hardware.camera2.CameraCharacteristics
-import android.hardware.camera2.CameraManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
-import android.util.Size
 import android.view.Surface
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -26,15 +22,10 @@ import org.json.JSONObject
 class GsCameraPlugin : FlutterPlugin, ActivityAware,
     MethodChannel.MethodCallHandler, EventChannel.StreamHandler {
 
-    private data class CameraInfo(
-        val id: String,
-        val focalMm: Float,
-        val label: String,
-    )
-
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private lateinit var motionChannel: EventChannel
+    private lateinit var exportProgressChannel: EventChannel
     private var appContext: Context? = null
     private var activity: Activity? = null
     private var textureRegistry: TextureRegistry? = null
@@ -59,12 +50,16 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         eventChannel.setStreamHandler(this)
         motionChannel = EventChannel(binding.binaryMessenger, "gs_camera/motion")
         motionChannel.setStreamHandler(motionStreamHandler)
+        exportProgressChannel = EventChannel(binding.binaryMessenger, "gs_camera/export_progress")
+        exportProgressChannel.setStreamHandler(exportProgressStreamHandler)
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         motionChannel.setStreamHandler(null)
+        exportProgressChannel.setStreamHandler(null)
+        ExportForegroundService.setProgressSink(null)
         stopMotion()
         session?.close()
         releaseTexture()
@@ -166,6 +161,9 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
                     result.success(intrinsicsFor(ctx, cameraIndex))
                 }
             }
+            "getCameraList" -> {
+                result.success(CameraSession.cameraInventoryMap(ctx))
+            }
             "capture" -> {
                 val s = session ?: return result.error("nosession", "init first", null)
                 s.captureJpeg { path, err ->
@@ -223,6 +221,16 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         }
     }
 
+    private val exportProgressStreamHandler = object : EventChannel.StreamHandler {
+        override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
+            ExportForegroundService.setProgressSink(events)
+        }
+
+        override fun onCancel(arguments: Any?) {
+            ExportForegroundService.setProgressSink(null)
+        }
+    }
+
     private fun startMotion() {
         val ctx = appContext ?: return
         val sensorManager = ctx.getSystemService(Context.SENSOR_SERVICE) as SensorManager
@@ -277,73 +285,7 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
     }
 
     private fun intrinsicsFor(ctx: Context, cameraIndex: Int): Map<String, Double> {
-        val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
-        val id = pickBackCamera(cm, cameraIndex.coerceIn(0, 2))
-        val chars = cm.getCameraCharacteristics(id)
-        val intr = chars.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
-        val streamMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
-        val size = streamMap?.getOutputSizes(ImageFormat.JPEG)
-            ?.maxByOrNull { it.width.toLong() * it.height }
-            ?: Size(0, 0)
-        return mapOf(
-            "fx" to ((intr?.getOrNull(0) ?: 0f).toDouble()),
-            "fy" to ((intr?.getOrNull(1) ?: 0f).toDouble()),
-            "cx" to ((intr?.getOrNull(2) ?: (size.width / 2f)).toDouble()),
-            "cy" to ((intr?.getOrNull(3) ?: (size.height / 2f)).toDouble()),
-            "width" to size.width.toDouble(),
-            "height" to size.height.toDouble(),
-        )
-    }
-
-    private fun pickBackCamera(cm: CameraManager, cameraIndex: Int): String {
-        val inventory = backCameraInventory(cm)
-        if (inventory.isEmpty()) throw RuntimeException("no back camera")
-        val main = inventory.firstOrNull { it.label == "main" }
-            ?: inventory.minByOrNull { kotlin.math.abs(it.focalMm - 5.0f) }
-            ?: inventory.first()
-        return when (lensName(cameraIndex)) {
-            "uw" -> inventory.firstOrNull { it.label == "uw" } ?: main
-            "tele" -> inventory.firstOrNull { it.label == "tele" } ?: main
-            else -> main
-        }.id
-    }
-
-    private fun backCameraInventory(cm: CameraManager): List<CameraInfo> {
-        val raw = mutableListOf<Pair<String, Float>>()
-        for (id in cm.cameraIdList) {
-            val chars = cm.getCameraCharacteristics(id)
-            if (chars.get(CameraCharacteristics.LENS_FACING) !=
-                CameraCharacteristics.LENS_FACING_BACK) continue
-            val focal = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS)
-                ?.firstOrNull() ?: 0f
-            raw.add(id to focal)
-        }
-        if (raw.isEmpty()) return emptyList()
-
-        val sorted = raw.sortedBy { it.second }
-        val main = sorted.minByOrNull { kotlin.math.abs(it.second - 5.0f) }
-            ?: sorted.last()
-        val uw = sorted
-            .filter { it.second < 2.5f && it.second < main.second - 0.5f }
-            .minByOrNull { it.second }
-        val tele = sorted
-            .filter { it.second > 6.0f && it.second > main.second + 1.0f }
-            .maxByOrNull { it.second }
-        return sorted.map { (id, focalMm) ->
-            val label = when (id) {
-                tele?.first -> "tele"
-                uw?.first -> "uw"
-                main.first -> "main"
-                else -> "main"
-            }
-            CameraInfo(id = id, focalMm = focalMm, label = label)
-        }
-    }
-
-    private fun lensName(cameraIndex: Int): String = when (cameraIndex.coerceIn(0, 2)) {
-        0 -> "uw"
-        2 -> "tele"
-        else -> "main"
+        return CameraSession.intrinsicsFor(ctx, cameraIndex)
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {

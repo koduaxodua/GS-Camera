@@ -16,6 +16,12 @@ class NativeExportStart {
 
 class NativeExportService {
   static const _method = MethodChannel('gs_camera/control');
+  static const _progressEvents = EventChannel('gs_camera/export_progress');
+
+  static Stream<Map<String, dynamic>> get progress =>
+      _progressEvents.receiveBroadcastStream().map(
+            (event) => (event as Map).cast<String, dynamic>(),
+          );
 
   static Future<NativeExportStart> start({
     required List<PhotoMeta> shots,

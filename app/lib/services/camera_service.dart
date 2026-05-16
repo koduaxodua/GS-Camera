@@ -14,6 +14,9 @@ class CameraService {
   Stream<PreviewFrame>? _previewFrames;
   double _lastPreviewLuminance = 0;
   CameraConfig? _lastConfig;
+  List<CameraInventoryItem> _cameraInventory = const [];
+
+  List<CameraInventoryItem> get cameraInventory => _cameraInventory;
 
   Future<CameraConfig> initSession(
       {CameraLensType camera = CameraLensType.main}) async {
@@ -25,9 +28,13 @@ class CameraService {
   }
 
   Future<CameraConfig> switchCamera(CameraLensType camera) async {
+    return switchCameraIndex(camera.cameraIndex);
+  }
+
+  Future<CameraConfig> switchCameraIndex(int index) async {
     final m = await _method.invokeMapMethod<String, dynamic>(
       'selectCamera',
-      {'camera_index': camera.cameraIndex},
+      {'camera_index': index},
     );
     return _remember(CameraConfig.fromMap(m!));
   }
@@ -48,6 +55,17 @@ class CameraService {
 
   Future<double> getPreviewLuminance() async => _lastPreviewLuminance;
 
+  Future<List<CameraInventoryItem>> getCameraList() async {
+    final raw = await _method.invokeListMethod<dynamic>('getCameraList');
+    final inventory = (raw ?? const [])
+        .whereType<Map>()
+        .map(
+            (item) => CameraInventoryItem.fromMap(item.cast<String, dynamic>()))
+        .toList(growable: false);
+    _cameraInventory = inventory;
+    return inventory;
+  }
+
   Future<CameraIntrinsics> getIntrinsics(CameraLensType camera) async {
     final m = await _method.invokeMapMethod<String, dynamic>(
       'getIntrinsics',
@@ -67,6 +85,9 @@ class CameraService {
 
   CameraConfig _remember(CameraConfig config) {
     _lastConfig = config;
+    if (config.cameraInventory.isNotEmpty) {
+      _cameraInventory = config.cameraInventory;
+    }
     return config;
   }
 
@@ -154,14 +175,16 @@ class CameraConfig {
   /// Legacy field: availableLenses reflects native labels. We compute a more
   /// conservative `hasTeleCamera` using actual focal lengths so the app
   /// doesn't try to use a Tele mode when no reasonably longer focal exists.
-  bool get hasTeleCamera => teleAvailableFromInventory ||
-      availableLenses.contains(CameraLensType.tele);
+  bool get hasTeleCamera => teleAvailableFromInventory;
 
-  bool supports(CameraLensType lens) => availableLenses.contains(lens);
+  bool supports(CameraLensType lens) => lens == CameraLensType.tele
+      ? hasTeleCamera
+      : availableLenses.contains(lens);
 
   /// Determine tele availability from actual camera inventory focal lengths.
   /// Tele is considered present only if one of the other cameras has a
-  /// focal length noticeably longer than the main lens (delta > 6.0 mm).
+  /// focal length noticeably longer than the main lens and native marked it
+  /// as real. This prevents Main fallback from being exported as Tele.
   bool get teleAvailableFromInventory {
     try {
       if (cameraInventory.isEmpty) return false;
@@ -170,14 +193,15 @@ class CameraConfig {
         (c) => c.cameraName == 'main',
         orElse: () => cameraInventory.first,
       );
-      final mainFocal = mainItem.focalLengthMm > 0
-          ? mainItem.focalLengthMm
-          : focalLengthMm;
+      final mainFocal =
+          mainItem.focalLengthMm > 0 ? mainItem.focalLengthMm : focalLengthMm;
       for (final item in cameraInventory) {
         if (item.cameraId == mainItem.cameraId) continue;
         final delta = item.focalLengthMm - mainFocal;
-        if (delta > 6.0) {
-          developer.log('tele detected: ${item.cameraName} focal=${item.focalLengthMm}mm main=${mainFocal}mm', name: 'gs_camera');
+        if (item.realTele && item.focalLengthMm > 7.0 && delta > 1.5) {
+          developer.log(
+              'tele detected: ${item.cameraName} focal=${item.focalLengthMm}mm main=${mainFocal}mm',
+              name: 'gs_camera');
           return true;
         }
       }
@@ -213,6 +237,11 @@ class CameraInventoryItem {
     required this.cameraId,
     required this.cameraName,
     required this.focalLengthMm,
+    this.sensorWidthMm = 0,
+    this.sensorHeightMm = 0,
+    this.activeArrayWidth = 0,
+    this.activeArrayHeight = 0,
+    this.realTele = false,
   });
 
   factory CameraInventoryItem.fromMap(Map<String, dynamic> m) =>
@@ -220,11 +249,21 @@ class CameraInventoryItem {
         cameraId: m['camera_id'] as String? ?? '',
         cameraName: m['camera_name'] as String? ?? 'main',
         focalLengthMm: (m['focal_length_mm'] as num?)?.toDouble() ?? 0,
+        sensorWidthMm: (m['sensor_width_mm'] as num?)?.toDouble() ?? 0,
+        sensorHeightMm: (m['sensor_height_mm'] as num?)?.toDouble() ?? 0,
+        activeArrayWidth: (m['active_array_width'] as num?)?.toInt() ?? 0,
+        activeArrayHeight: (m['active_array_height'] as num?)?.toInt() ?? 0,
+        realTele: m['real_tele'] == true,
       );
 
   final String cameraId;
   final String cameraName;
   final double focalLengthMm;
+  final double sensorWidthMm;
+  final double sensorHeightMm;
+  final int activeArrayWidth;
+  final int activeArrayHeight;
+  final bool realTele;
 }
 
 class CameraIntrinsics {

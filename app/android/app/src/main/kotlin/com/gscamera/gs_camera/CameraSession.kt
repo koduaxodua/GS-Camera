@@ -2,6 +2,7 @@ package com.gscamera.gs_camera
 
 import android.content.Context
 import android.graphics.ImageFormat
+import android.graphics.Rect
 import android.graphics.SurfaceTexture
 import android.hardware.camera2.*
 import android.media.ImageReader
@@ -45,6 +46,11 @@ class CameraSession(
         val id: String,
         val focalMm: Float,
         val label: String,
+        val sensorWidthMm: Float,
+        val sensorHeightMm: Float,
+        val activeArrayWidth: Int,
+        val activeArrayHeight: Int,
+        val realTele: Boolean = false,
     )
 
     private data class CameraSelection(
@@ -557,6 +563,8 @@ class CameraSession(
         )
     }
 
+    fun cameraList(): List<Map<String, Any>> = cameraInventoryMap(ctx)
+
     fun close() {
         runCatching { session?.close() }
         runCatching { device?.close() }
@@ -610,45 +618,32 @@ class CameraSession(
     }
 
     private fun backCameraInventory(): List<CameraInfo> {
-        val raw = mutableListOf<Pair<String, Float>>()
-        for (id in cm.cameraIdList) {
-            val chars = cm.getCameraCharacteristics(id)
-            if (chars.get(CameraCharacteristics.LENS_FACING) !=
-                CameraCharacteristics.LENS_FACING_BACK) continue
-            val capabilities = chars.get(
-                CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
-            ) ?: intArrayOf()
-            if (CameraCharacteristics
-                    .REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE
-                !in capabilities) continue
-
-            val focalLengths = chars.get(
-                CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
-            ) ?: floatArrayOf(0f)
-            val focalMm = focalLengths.firstOrNull() ?: 0f
-            raw.add(id to focalMm)
-        }
+        val raw = collectBackCameraInfo(cm)
         if (raw.isEmpty()) return emptyList()
 
-        val sorted = raw.sortedBy { it.second }
-        val main = sorted.minByOrNull { kotlin.math.abs(it.second - 5.0f) }
+        val sorted = raw.sortedBy { it.focalMm }
+        val main = sorted.minByOrNull { kotlin.math.abs(it.focalMm - 5.0f) }
             ?: sorted.last()
         val uw = sorted
-            .filter { it.second < 2.5f && it.second < main.second - 0.5f }
-            .minByOrNull { it.second }
+            .filter { it.focalMm < 2.5f && it.focalMm < main.focalMm - 0.5f }
+            .minByOrNull { it.focalMm }
         val tele = sorted
-            .filter { it.second > 6.0f && it.second > main.second + 1.0f }
-            .maxByOrNull { it.second }
+            .filter { isRealTeleCandidate(it, main) }
+            .maxByOrNull { it.focalMm }
 
-        return sorted.map { (id, focalMm) ->
-            val label = when (id) {
-                tele?.first -> "tele"
-                uw?.first -> "uw"
-                main.first -> "main"
+        return sorted.map { info ->
+            val label = when (info.id) {
+                tele?.id -> "tele"
+                uw?.id -> "uw"
+                main.id -> "main"
                 else -> "main"
             }
-            Log.i(TAG, "back camera $id focal=${focalMm}mm label=$label")
-            CameraInfo(id = id, focalMm = focalMm, label = label)
+            val realTele = label == "tele"
+            Log.i(TAG, "back camera ${info.id} focal=${info.focalMm}mm " +
+                "sensor=${info.sensorWidthMm}x${info.sensorHeightMm} " +
+                "active=${info.activeArrayWidth}x${info.activeArrayHeight} " +
+                "label=$label realTele=$realTele")
+            info.copy(label = label, realTele = realTele)
         }
     }
 
@@ -734,13 +729,130 @@ class CameraSession(
                 "camera_id" to it.id,
                 "camera_name" to it.label,
                 "focal_length_mm" to it.focalMm.toDouble(),
+                "sensor_width_mm" to it.sensorWidthMm.toDouble(),
+                "sensor_height_mm" to it.sensorHeightMm.toDouble(),
+                "active_array_width" to it.activeArrayWidth,
+                "active_array_height" to it.activeArrayHeight,
+                "real_tele" to it.realTele,
             )
         },
+        "real_tele_available" to cameraInventory.any { it.realTele },
     )
 
     private operator fun IntArray.contains(v: Int): Boolean = indexOf(v) >= 0
 
     companion object {
         private const val TAG = "GsCameraSession"
+
+        fun intrinsicsFor(ctx: Context, cameraIndex: Int): Map<String, Double> {
+            val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val labeled = cameraInventoryMap(ctx)
+            if (labeled.isEmpty()) throw RuntimeException("no back camera")
+            val requested = when (cameraIndex.coerceIn(0, 2)) {
+                0 -> "uw"
+                2 -> "tele"
+                else -> "main"
+            }
+            val selected = labeled.firstOrNull { it["camera_name"] == requested }
+                ?: labeled.firstOrNull { it["camera_name"] == "main" }
+                ?: labeled.first()
+            val id = selected["camera_id"] as String
+            val chars = cm.getCameraCharacteristics(id)
+            val intr = chars.get(CameraCharacteristics.LENS_INTRINSIC_CALIBRATION)
+            val streamMap = chars.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP)
+            val size = streamMap?.getOutputSizes(ImageFormat.JPEG)
+                ?.maxByOrNull { it.width.toLong() * it.height }
+                ?: Size(0, 0)
+            return mapOf(
+                "fx" to ((intr?.getOrNull(0) ?: 0f).toDouble()),
+                "fy" to ((intr?.getOrNull(1) ?: 0f).toDouble()),
+                "cx" to ((intr?.getOrNull(2) ?: (size.width / 2f)).toDouble()),
+                "cy" to ((intr?.getOrNull(3) ?: (size.height / 2f)).toDouble()),
+                "width" to size.width.toDouble(),
+                "height" to size.height.toDouble(),
+            )
+        }
+
+        fun cameraInventoryMap(ctx: Context): List<Map<String, Any>> {
+            val cm = ctx.getSystemService(Context.CAMERA_SERVICE) as CameraManager
+            val raw = collectBackCameraInfo(cm)
+            if (raw.isEmpty()) return emptyList()
+            val sorted = raw.sortedBy { it.focalMm }
+            val main = sorted.minByOrNull { kotlin.math.abs(it.focalMm - 5.0f) }
+                ?: sorted.last()
+            val uw = sorted
+                .filter { it.focalMm < 2.5f && it.focalMm < main.focalMm - 0.5f }
+                .minByOrNull { it.focalMm }
+            val tele = sorted
+                .filter { isRealTeleCandidate(it, main) }
+                .maxByOrNull { it.focalMm }
+            return sorted.map { info ->
+                val label = when (info.id) {
+                    tele?.id -> "tele"
+                    uw?.id -> "uw"
+                    main.id -> "main"
+                    else -> "main"
+                }
+                cameraInfoMap(info.copy(label = label, realTele = label == "tele"))
+            }
+        }
+
+        private fun collectBackCameraInfo(cm: CameraManager): List<CameraInfo> {
+            val out = mutableListOf<CameraInfo>()
+            for (id in cm.cameraIdList) {
+                val chars = cm.getCameraCharacteristics(id)
+                if (chars.get(CameraCharacteristics.LENS_FACING) !=
+                    CameraCharacteristics.LENS_FACING_BACK) continue
+                val capabilities = chars.get(
+                    CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
+                ) ?: intArrayOf()
+                if (capabilities.indexOf(
+                        CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES_BACKWARD_COMPATIBLE
+                    ) < 0) continue
+
+                val focalMm = chars.get(
+                    CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                )?.firstOrNull() ?: 0f
+                val physical = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
+                val active: Rect? = chars.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)
+                out.add(
+                    CameraInfo(
+                        id = id,
+                        focalMm = focalMm,
+                        label = "main",
+                        sensorWidthMm = physical?.width ?: 0f,
+                        sensorHeightMm = physical?.height ?: 0f,
+                        activeArrayWidth = active?.width() ?: 0,
+                        activeArrayHeight = active?.height() ?: 0,
+                    )
+                )
+            }
+            return out
+        }
+
+        private fun isRealTeleCandidate(info: CameraInfo, main: CameraInfo): Boolean {
+            val focalLooksTele = info.focalMm > 7.0f && info.focalMm > main.focalMm + 1.5f
+            val hasSensorData = info.sensorWidthMm > 0f && main.sensorWidthMm > 0f
+            val sensorDiffers = if (hasSensorData) {
+                kotlin.math.abs(info.sensorWidthMm - main.sensorWidthMm) > 0.2f ||
+                    kotlin.math.abs(info.sensorHeightMm - main.sensorHeightMm) > 0.2f ||
+                    kotlin.math.abs(info.activeArrayWidth - main.activeArrayWidth) > 200 ||
+                    kotlin.math.abs(info.activeArrayHeight - main.activeArrayHeight) > 200
+            } else {
+                true
+            }
+            return focalLooksTele && sensorDiffers
+        }
+
+        private fun cameraInfoMap(info: CameraInfo): Map<String, Any> = mapOf(
+            "camera_id" to info.id,
+            "camera_name" to info.label,
+            "focal_length_mm" to info.focalMm.toDouble(),
+            "sensor_width_mm" to info.sensorWidthMm.toDouble(),
+            "sensor_height_mm" to info.sensorHeightMm.toDouble(),
+            "active_array_width" to info.activeArrayWidth,
+            "active_array_height" to info.activeArrayHeight,
+            "real_tele" to info.realTele,
+        )
     }
 }

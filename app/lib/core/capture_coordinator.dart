@@ -164,7 +164,8 @@ class CaptureCoordinator extends ChangeNotifier {
     // Force capture should always use the currently active camera and
     // should not implicitly switch lenses. This avoids stalls when a
     // desired lens (e.g. tele) isn't present.
-    developer.log('forceCapture invoked on active=${_activeCamera.name}', name: 'gs_camera.capture');
+    developer.log('forceCapture invoked on active=${_activeCamera.name}',
+        name: 'gs_camera.capture');
     await _fireCapture(sensor, force: true);
   }
 
@@ -255,7 +256,9 @@ class CaptureCoordinator extends ChangeNotifier {
             ? CapturePhase.qualityUpgrade
             : CapturePhase.basicFill;
     if (_phase != nextPhase) {
-      developer.log('phase_change from=${_phase.name} to=${nextPhase.name} coverage=${coverage.toStringAsFixed(1)}', name: 'gs_camera.capture');
+      developer.log(
+          'phase_change from=${_phase.name} to=${nextPhase.name} coverage=${coverage.toStringAsFixed(1)}',
+          name: 'gs_camera.capture');
     }
     _phase = nextPhase;
 
@@ -277,7 +280,8 @@ class CaptureCoordinator extends ChangeNotifier {
       final old = _activeCamera;
       _config = await camera.switchCamera(cameraType);
       _activeCamera = _config?.lensType ?? cameraType;
-      developer.log('camera_switch from=${old.name} to=${_activeCamera.name}', name: 'gs_camera.capture');
+      developer.log('camera_switch from=${old.name} to=${_activeCamera.name}',
+          name: 'gs_camera.capture');
       _setState(CaptureState.capturing);
     } catch (e) {
       debugPrint('camera switch failed: $e');
@@ -409,25 +413,22 @@ class CaptureCoordinator extends ChangeNotifier {
         exposureLockValue: cfg?.exposureValue ?? 0,
         iso: cfg?.iso ?? 0,
         shutterSpeedNs: cfg?.shutterSpeedNs ?? 0,
-          camera: cameraLabel,
+        camera: cameraLabel,
       );
       shots.add(meta);
-      final recordedCamera = CameraLensType.fromExportName(
-          cfg?.cameraName ?? _activeCamera.exportName);
+      final recordedCamera = CameraLensType.fromExportName(cameraLabel);
       _activeCamera = recordedCamera;
       _lastYawByCamera[recordedCamera] = sensor.azimuthDeg;
       _lastShotByCamera[recordedCamera] = DateTime.now();
-      if (!force) {
-        coverageTracker.recordFrame(
-          mode: mode,
-          camera: recordedCamera,
-          azimuthDeg: sensor.azimuthDeg,
-          elevationDeg: sensor.elevationDeg,
-          sharpness: _latestSharpness,
-          textureScore: _latestTexture,
-          qualityAccepted: qualityAccepted,
-        );
-      }
+      coverageTracker.recordFrame(
+        mode: mode,
+        camera: recordedCamera,
+        azimuthDeg: sensor.azimuthDeg,
+        elevationDeg: sensor.elevationDeg,
+        sharpness: _latestSharpness,
+        textureScore: _latestTexture,
+        qualityAccepted: force || qualityAccepted,
+      );
       _cancelAutoFinish();
       _notifyThrottled(force: true);
     } catch (e, st) {

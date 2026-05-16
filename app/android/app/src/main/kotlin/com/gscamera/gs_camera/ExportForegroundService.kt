@@ -6,9 +6,13 @@ import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import io.flutter.plugin.common.EventChannel
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -31,10 +35,16 @@ class ExportForegroundService : Service() {
             ?: buildOutputPath(this, asZip)
 
         createChannel()
-        startForeground(
-            NOTIFICATION_ID,
-            notification("Preparing export", 0, 1, false),
-        )
+        val firstNotification = notification("Preparing export", 0, 1, false)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID,
+                firstNotification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, firstNotification)
+        }
 
         Thread {
             runCatching {
@@ -60,11 +70,16 @@ class ExportForegroundService : Service() {
         outputPath: String,
         asZip: Boolean,
     ) {
-        val total = shots.length() + 2
+        val proExport = sessionInfo.optBoolean("pro_export", false)
+        val total = shots.length() + 2 + if (proExport) 3 else 0
         var done = 0
         if (asZip) {
-            ZipOutputStream(FileOutputStream(outputPath)).use { zip ->
+            val finalFile = File(outputPath)
+            val tmpFile = File("${outputPath}.tmp")
+            if (tmpFile.exists()) tmpFile.delete()
+            ZipOutputStream(FileOutputStream(tmpFile)).use { zip ->
                 val exportedShots = JSONArray()
+                addZipDirectory(zip, "sparse/")
                 for (i in 0 until shots.length()) {
                     val shot = shots.getJSONObject(i)
                     val src = File(shot.getString("path"))
@@ -87,10 +102,21 @@ class ExportForegroundService : Service() {
                 zipString(zip, "README.txt", README_BODY)
                 done++
                 updateProgress(done, total, "README.txt")
+                addProExportPlaceholders(zip, proExport)
+                if (proExport) {
+                    done += 3
+                    updateProgress(done, total, "pro placeholders")
+                }
+            }
+            if (finalFile.exists()) finalFile.delete()
+            if (!tmpFile.renameTo(finalFile)) {
+                tmpFile.copyTo(finalFile, overwrite = true)
+                tmpFile.delete()
             }
         } else {
             val outDir = File(outputPath)
             outDir.mkdirs()
+            File(outDir, "sparse").mkdirs()
             val exportedShots = JSONArray()
             for (i in 0 until shots.length()) {
                 val shot = shots.getJSONObject(i)
@@ -119,6 +145,11 @@ class ExportForegroundService : Service() {
             File(outDir, "README.txt").writeText(README_BODY)
             done++
             updateProgress(done, total, "README.txt")
+            addProExportPlaceholderFolders(outDir, proExport)
+            if (proExport) {
+                done += 3
+                updateProgress(done, total, "pro placeholders")
+            }
         }
         notifyFinal("Export complete", outputPath)
     }
@@ -136,17 +167,38 @@ class ExportForegroundService : Service() {
         zip.closeEntry()
     }
 
+    private fun addZipDirectory(zip: ZipOutputStream, name: String) {
+        zip.putNextEntry(ZipEntry(name))
+        zip.closeEntry()
+    }
+
+    private fun addProExportPlaceholders(zip: ZipOutputStream, enabled: Boolean) {
+        if (!enabled) return
+        addZipDirectory(zip, "pro/depth/")
+        addZipDirectory(zip, "pro/edge/")
+        addZipDirectory(zip, "pro/normal/")
+    }
+
+    private fun addProExportPlaceholderFolders(outDir: File, enabled: Boolean) {
+        if (!enabled) return
+        File(outDir, "pro/depth").mkdirs()
+        File(outDir, "pro/edge").mkdirs()
+        File(outDir, "pro/normal").mkdirs()
+    }
+
     private fun updateProgress(done: Int, total: Int, current: String) {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         mgr.notify(
             NOTIFICATION_ID,
             notification("Exporting $done / $total", done, total, false, current),
         )
+        emitProgress(done, total, current, false, null)
     }
 
     private fun notifyFinal(title: String, text: String) {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         mgr.notify(NOTIFICATION_ID, notification(title, 1, 1, true, text))
+        emitProgress(1, 1, title, true, text)
     }
 
     private fun notification(
@@ -190,6 +242,30 @@ class ExportForegroundService : Service() {
         private const val EXTRA_SESSION_INFO = "session_info_json"
         private const val EXTRA_AS_ZIP = "as_zip"
         private const val EXTRA_OUTPUT_PATH = "output_path"
+        private val mainHandler = Handler(Looper.getMainLooper())
+        @Volatile private var progressSink: EventChannel.EventSink? = null
+
+        fun setProgressSink(sink: EventChannel.EventSink?) {
+            progressSink = sink
+        }
+
+        private fun emitProgress(
+            done: Int,
+            total: Int,
+            current: String,
+            finished: Boolean,
+            outputPath: String?,
+        ) {
+            val payload = mapOf(
+                "files_done" to done,
+                "files_total" to total,
+                "current_name" to current,
+                "fraction" to if (total <= 0) 0.0 else done.toDouble() / total.toDouble(),
+                "finished" to finished,
+                "output_path" to (outputPath ?: ""),
+            )
+            mainHandler.post { progressSink?.success(payload) }
+        }
 
         fun buildOutputPath(ctx: Context, asZip: Boolean): String {
             val root = File(

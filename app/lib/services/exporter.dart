@@ -82,7 +82,8 @@ class Exporter {
   }) async* {
     final kept = shots.where((p) => p.keptInExport).toList()
       ..sort((a, b) => a.index.compareTo(b.index));
-    final total = kept.length + 2; // photos + session.json + README.txt
+    final proExport = sessionInfo['pro_export'] == true;
+    final total = kept.length + 2 + (proExport ? 3 : 0);
 
     if (asZip) {
       yield* _writeZip(
@@ -123,6 +124,7 @@ class Exporter {
     required int total,
   }) async* {
     var done = 0;
+    await Directory('${destination.path}/sparse').create(recursive: true);
     // Use sequential 0001.jpg, 0002.jpg, ... numbering on the destination
     // side so postshot sees a contiguous image sequence even when dedup
     // skipped capture indexes mid-session.
@@ -194,6 +196,10 @@ class Exporter {
       print('export: README failed: $e');
     }
     done++;
+    if (sessionInfo['pro_export'] == true) {
+      await _writeProExportPlaceholders(destination);
+      done += 3;
+    }
     yield ExportProgress(
       filesDone: done,
       filesTotal: total,
@@ -211,11 +217,13 @@ class Exporter {
     required int total,
   }) async* {
     final zipPath = '${destination.path}.zip';
+    final tmpZipPath = '$zipPath.tmp';
     final encoder = ZipFileEncoder();
-    encoder.create(zipPath);
+    encoder.create(tmpZipPath);
     var done = 0;
     var seq = 0;
     try {
+      encoder.addArchiveFile(ArchiveFile('sparse/', 0, const []));
       for (final s in shots) {
         seq++;
         final padded = seq.toString().padLeft(4, '0');
@@ -275,9 +283,20 @@ class Exporter {
         print('export(zip): README failed: $e');
       }
       done++;
+      if (sessionInfo['pro_export'] == true) {
+        encoder.addArchiveFile(ArchiveFile('pro/depth/', 0, const []));
+        encoder.addArchiveFile(ArchiveFile('pro/edge/', 0, const []));
+        encoder.addArchiveFile(ArchiveFile('pro/normal/', 0, const []));
+        done += 3;
+      }
     } finally {
       await encoder.close();
     }
+
+    final tmpZip = File(tmpZipPath);
+    final finalZip = File(zipPath);
+    if (await finalZip.exists()) await finalZip.delete();
+    await tmpZip.rename(zipPath);
 
     try {
       if (await destination.exists() && (await destination.list().isEmpty)) {
@@ -311,6 +330,12 @@ class Exporter {
 
   static Future<void> _writeReadme(Directory destination) async {
     await File('${destination.path}/README.txt').writeAsString(_readmeBody);
+  }
+
+  static Future<void> _writeProExportPlaceholders(Directory destination) async {
+    await Directory('${destination.path}/pro/depth').create(recursive: true);
+    await Directory('${destination.path}/pro/edge').create(recursive: true);
+    await Directory('${destination.path}/pro/normal').create(recursive: true);
   }
 
   static const _readmeBody = '''

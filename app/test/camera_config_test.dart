@@ -27,11 +27,13 @@ void main() {
           'camera_id': '2',
           'camera_name': 'uw',
           'focal_length_mm': 1.8,
+          'real_tele': false,
         },
         {
           'camera_id': '0',
           'camera_name': 'main',
           'focal_length_mm': 4.3,
+          'real_tele': false,
         },
       ],
     });
@@ -40,5 +42,37 @@ void main() {
     expect(config.hasTeleCamera, isFalse);
     expect(config.supports(CameraLensType.tele), isFalse);
     expect(config.availableLenses, [CameraLensType.uw, CameraLensType.main]);
+  });
+
+  test('tele support requires native real tele inventory flag', () {
+    final config = CameraConfig.fromMap({
+      'camera_name': 'main',
+      'camera_id': '0',
+      'focal_length_mm': 4.3,
+      'available_lenses': ['uw', 'main', 'tele'],
+      'camera_inventory': [
+        {
+          'camera_id': '2',
+          'camera_name': 'uw',
+          'focal_length_mm': 1.8,
+          'real_tele': false,
+        },
+        {
+          'camera_id': '0',
+          'camera_name': 'main',
+          'focal_length_mm': 4.3,
+          'real_tele': false,
+        },
+        {
+          'camera_id': '3',
+          'camera_name': 'tele',
+          'focal_length_mm': 9.0,
+          'real_tele': true,
+        },
+      ],
+    });
+
+    expect(config.hasTeleCamera, isTrue);
+    expect(config.supports(CameraLensType.tele), isTrue);
   });
 }
