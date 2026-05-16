@@ -45,9 +45,7 @@ class ExportProgress {
 ///     are stored without recompression to preserve the locked-exposure
 ///     pixel values; the JSON / README go in compressed.
 class Exporter {
-  /// Builds the export folder path. We use the app's external files dir
-  /// — no storage permission needed and the Files app sees it under
-  /// `Internal storage > Android > data > com.gscamera.gs_camera > files`.
+  /// Builds the export folder path. Android writes to public Downloads first.
   static Future<Directory> sessionDir(DateTime startedAt) async {
     final ts = _stampFor(startedAt);
     final base = await _exportRoot();
@@ -58,11 +56,17 @@ class Exporter {
 
   static Future<Directory> _exportRoot() async {
     if (Platform.isAndroid) {
-      final ext = await getExternalStorageDirectory();
-      if (ext != null) {
-        final root = Directory('${ext.path}/GSCamera');
-        await root.create(recursive: true);
-        return root;
+      final downloads = Directory('/storage/emulated/0/Download/GS-Camera');
+      try {
+        await downloads.create(recursive: true);
+        return downloads;
+      } catch (_) {
+        final ext = await getExternalStorageDirectory();
+        if (ext != null) {
+          final root = Directory('${ext.path}/GSCamera');
+          await root.create(recursive: true);
+          return root;
+        }
       }
     }
     final docs = await getApplicationDocumentsDirectory();

@@ -37,7 +37,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Directory? _exportedDir;
   File? _exportedZip;
   bool _exporting = false;
-  bool _exportAsZip = true;
+  final bool _exportAsZip = false;
   ExportProgress? _progress;
   int _manualDeletes = 0;
   bool _backgroundExport = false;
@@ -396,28 +396,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                'Bundle as a single .zip',
-                style: TextStyle(
-                  color: Colors.white.withValues(alpha: 0.7),
-                  fontSize: 13,
-                ),
-              ),
-            ),
-            Switch(
-              value: _exportAsZip,
-              onChanged: _backgroundExport
-                  ? null
-                  : (v) {
-                      setState(() => _exportAsZip = v);
-                      _runExport();
-                    },
-              activeThumbColor: Colors.lightGreenAccent,
-            ),
-          ],
+        Text(
+          'Exports are saved as folders in Downloads / GS-Camera.',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.7),
+            fontSize: 13,
+          ),
         ),
       ],
     );

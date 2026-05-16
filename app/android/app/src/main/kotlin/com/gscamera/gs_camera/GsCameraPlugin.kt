@@ -345,7 +345,7 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         val relative = if (withoutFile.startsWith(marker)) {
             withoutFile.removePrefix(marker)
         } else {
-            "Android/data/com.gscamera.gs_camera/files/Pictures/GSCamera"
+            "Download/GS-Camera"
         }
         val documentId = "primary:$relative"
         return DocumentsContract.buildTreeDocumentUri(
