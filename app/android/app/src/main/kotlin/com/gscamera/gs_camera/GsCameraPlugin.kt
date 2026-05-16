@@ -178,7 +178,12 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
                 val s = session ?: return result.error("nosession", "init first", null)
                 s.recalibrate { cfg, err ->
                     if (err != null) result.error("recalibrate", err.message, null)
-                    else result.success(cfg)
+                    else {
+                        val withTexture = cfg!!.toMutableMap().apply {
+                            textureEntry?.let { this["texture_id"] = it.id() }
+                        }
+                        result.success(withTexture)
+                    }
                 }
             }
             "dispose" -> {

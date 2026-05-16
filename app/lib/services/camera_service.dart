@@ -46,7 +46,9 @@ class CameraService {
 
   Future<CameraConfig> recalibrate() async {
     final m = await _method.invokeMapMethod<String, dynamic>('recalibrate');
-    return _remember(CameraConfig.fromMap(m!));
+    final raw = Map<String, dynamic>.from(m!);
+    raw['texture_id'] ??= _lastConfig?.textureId ?? -1;
+    return _remember(CameraConfig.fromMap(raw));
   }
 
   Future<void> dispose() async {
