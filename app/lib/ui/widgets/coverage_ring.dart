@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../../core/coverage_tracker.dart';
+import '../../core/app_strings.dart';
 
 class CoverageRing extends StatelessWidget {
   const CoverageRing({
@@ -42,7 +43,7 @@ class CoverageRing extends StatelessWidget {
             ),
           ),
           Transform.rotate(
-            angle: currentYawDeg * math.pi / 180,
+            angle: currentYawDeg * 3.141592653589793 / 180,
             child: Transform.translate(
               offset: Offset(0, -radius),
               child: Container(
@@ -63,7 +64,7 @@ class CoverageRing extends StatelessWidget {
               top: 6,
               child: _MiniBandProgress(
                 icon: Icons.arrow_drop_up,
-                label: 'C',
+                label: AppStrings.ceilingLabel,
                 percent: state.ceilingPercent,
               ),
             ),
@@ -71,7 +72,7 @@ class CoverageRing extends StatelessWidget {
               bottom: 6,
               child: _MiniBandProgress(
                 icon: Icons.arrow_drop_down,
-                label: 'F',
+                label: AppStrings.floorLabel,
                 percent: state.floorPercent,
               ),
             ),

@@ -14,6 +14,9 @@ class CameraService {
   double _lastPreviewLuminance = 0;
   CameraConfig? _lastConfig;
 
+  CameraLensType get currentLensType =>
+      _lastConfig?.lensType ?? CameraLensType.main;
+
   Future<CameraConfig> initSession(
       {CameraLensType camera = CameraLensType.main}) async {
     final m = await _method.invokeMapMethod<String, dynamic>(

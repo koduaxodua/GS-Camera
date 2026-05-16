@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/app_strings.dart';
 import '../../core/capture_coordinator.dart';
 
 class GuidanceHUD extends StatelessWidget {
@@ -34,7 +35,7 @@ class GuidanceHUD extends StatelessWidget {
             ),
             const SizedBox(width: 10),
             Text(
-              guidance.text,
+              _localizedText(guidance.text),
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 20,
@@ -45,6 +46,17 @@ class GuidanceHUD extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  String _localizedText(String text) {
+    // Strip the checkmark for localization lookup
+    final cleanText = text.replaceAll('✓ ', '');
+    final localized = AppStrings.getGuidance(cleanText, 'en');
+    // Re-add checkmark if it was present
+    if (text.startsWith('✓ ')) {
+      return '✓ $localized';
+    }
+    return localized;
   }
 
   IconData _iconFor(String name) {
