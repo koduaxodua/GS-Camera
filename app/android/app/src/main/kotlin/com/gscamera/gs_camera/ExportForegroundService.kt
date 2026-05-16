@@ -58,7 +58,7 @@ class ExportForegroundService : Service() {
                     asZip = asZip,
                 )
             }.onFailure {
-                notifyFinal("Export failed", it.message ?: "Unknown error")
+                notifyFinal("Export failed", it.message ?: "Unknown error", "")
             }
             stopForeground(false)
             stopSelf(startId)
@@ -74,10 +74,19 @@ class ExportForegroundService : Service() {
         asZip: Boolean,
     ) {
         val proExport = sessionInfo.optBoolean("pro_export", false)
-        val total = shots.length() + 2 + if (proExport) 3 else 0
+        val companionZip = !asZip
+        val folderUnits = shots.length() + 2 + if (proExport) 3 else 0
+        val zipUnits = if (companionZip) shots.length() + 1 else 0
+        val total = folderUnits + zipUnits
         var done = 0
         if (asZip) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isPublicDownloadPath(outputPath)) {
+                exportZipToDownloads(shots, sessionInfo, outputPath, proExport, done, total)
+                notifyFinal("Export complete", outputPath, outputPath)
+                return
+            }
             val finalFile = File(outputPath)
+            finalFile.parentFile?.mkdirs()
             val tmpFile = File("${outputPath}.tmp")
             if (tmpFile.exists()) tmpFile.delete()
             ZipOutputStream(FileOutputStream(tmpFile)).use { zip ->
@@ -116,8 +125,13 @@ class ExportForegroundService : Service() {
                 tmpFile.copyTo(finalFile, overwrite = true)
                 tmpFile.delete()
             }
+            notifyFinal("Export complete", outputPath, outputPath)
+            return
         } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && isPublicDownloadPath(outputPath)) {
-            exportFolderToDownloads(shots, sessionInfo, outputPath, proExport, total)
+            done = exportFolderToDownloads(shots, sessionInfo, outputPath, proExport, total)
+            val zipPath = "$outputPath.zip"
+            exportZipToDownloads(shots, sessionInfo, zipPath, proExport, done, total)
+            notifyFinal("Export complete", outputPath, zipPath)
             return
         } else {
             val outDir = File(outputPath)
@@ -133,10 +147,7 @@ class ExportForegroundService : Service() {
                 val cameraDir = File(outDir, "images/$camera").apply { mkdirs() }
                 val dest = File(cameraDir, name)
                 if (src.exists()) {
-                    if (!src.renameTo(dest)) {
-                        src.copyTo(dest, overwrite = true)
-                        src.delete()
-                    }
+                    src.copyTo(dest, overwrite = true)
                 }
                 meta.put("filename", name)
                 exportedShots.put(meta)
@@ -156,8 +167,11 @@ class ExportForegroundService : Service() {
                 done += 3
                 updateProgress(done, total, "pro placeholders")
             }
+            val zipPath = "$outputPath.zip"
+            exportZipToFile(shots, sessionInfo, zipPath, proExport, done, total)
+            notifyFinal("Export complete", outputPath, zipPath)
+            return
         }
-        notifyFinal("Export complete", outputPath)
     }
 
     private fun exportFolderToDownloads(
@@ -166,7 +180,7 @@ class ExportForegroundService : Service() {
         outputPath: String,
         proExport: Boolean,
         total: Int,
-    ) {
+    ): Int {
         val sessionPath = downloadsRelativePath(outputPath)
         val exportedShots = JSONArray()
         var done = 0
@@ -181,7 +195,6 @@ class ExportForegroundService : Service() {
                 writeDownloadBytes("$sessionPath/images/$camera", name, "image/jpeg") { out ->
                     FileInputStream(src).use { it.copyTo(out) }
                 }
-                src.delete()
             }
             meta.put("filename", name)
             exportedShots.put(meta)
@@ -205,7 +218,7 @@ class ExportForegroundService : Service() {
             done += 3
             updateProgress(done, total, "pro placeholders")
         }
-        notifyFinal("Export complete", outputPath)
+        return done
     }
 
     private fun isPublicDownloadPath(path: String): Boolean {
@@ -246,6 +259,87 @@ class ExportForegroundService : Service() {
         contentResolver.update(uri, values, null, null)
     }
 
+    private fun exportZipToDownloads(
+        shots: JSONArray,
+        sessionInfo: JSONObject,
+        zipPath: String,
+        proExport: Boolean,
+        doneStart: Int,
+        total: Int,
+    ): Int {
+        var done = doneStart
+        val relative = downloadsRelativePath(zipPath)
+        val parent = relative.substringBeforeLast("/", "Download/GS-Camera")
+        val name = File(relative).name
+        writeDownloadBytes(parent, name, "application/zip") { out ->
+            ZipOutputStream(out).use { zip ->
+                done = writeZipContents(zip, shots, sessionInfo, proExport, done, total)
+            }
+        }
+        updateProgress(total, total, name)
+        return total
+    }
+
+    private fun exportZipToFile(
+        shots: JSONArray,
+        sessionInfo: JSONObject,
+        zipPath: String,
+        proExport: Boolean,
+        doneStart: Int,
+        total: Int,
+    ): Int {
+        val finalFile = File(zipPath)
+        finalFile.parentFile?.mkdirs()
+        val tmpFile = File("$zipPath.tmp")
+        if (tmpFile.exists()) tmpFile.delete()
+        var done = doneStart
+        ZipOutputStream(FileOutputStream(tmpFile)).use { zip ->
+            done = writeZipContents(zip, shots, sessionInfo, proExport, done, total)
+        }
+        if (finalFile.exists()) finalFile.delete()
+        if (!tmpFile.renameTo(finalFile)) {
+            tmpFile.copyTo(finalFile, overwrite = true)
+            tmpFile.delete()
+        }
+        updateProgress(total, total, finalFile.name)
+        return total
+    }
+
+    private fun writeZipContents(
+        zip: ZipOutputStream,
+        shots: JSONArray,
+        sessionInfo: JSONObject,
+        proExport: Boolean,
+        doneStart: Int,
+        total: Int,
+    ): Int {
+        var done = doneStart
+        val exportedShots = JSONArray()
+        addZipDirectory(zip, "sparse/")
+        for (i in 0 until shots.length()) {
+            val shot = shots.getJSONObject(i)
+            val src = File(shot.getString("path"))
+            val meta = shot.getJSONObject("meta")
+            val camera = meta.optString("camera", "main")
+            val name = "${(i + 1).toString().padStart(4, '0')}.jpg"
+            if (src.exists()) {
+                zip.putNextEntry(ZipEntry("images/$camera/$name"))
+                FileInputStream(src).use { it.copyTo(zip) }
+                zip.closeEntry()
+            }
+            meta.put("filename", name)
+            exportedShots.put(meta)
+            done++
+            updateProgress(done.coerceAtMost(total), total, "zip/$name")
+        }
+        zipString(zip, "session.json", sessionJson(sessionInfo, exportedShots))
+        zipString(zip, "README.txt", README_BODY)
+        addProExportPlaceholders(zip, proExport)
+        done++
+        updateProgress(done.coerceAtMost(total), total, "Session.zip")
+        return done
+    }
+
     private fun sessionJson(sessionInfo: JSONObject, shots: JSONArray): String {
         val out = JSONObject(sessionInfo.toString())
         out.put("shot_count", shots.length())
@@ -284,13 +378,13 @@ class ExportForegroundService : Service() {
             NOTIFICATION_ID,
             notification("Exporting $done / $total", done, total, false, current),
         )
-        emitProgress(done, total, current, false, null)
+        emitProgress(done, total, current, false, null, null)
     }
 
-    private fun notifyFinal(title: String, text: String) {
+    private fun notifyFinal(title: String, text: String, zipPath: String) {
         val mgr = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         mgr.notify(NOTIFICATION_ID, notification(title, 1, 1, true, text))
-        emitProgress(1, 1, title, true, text)
+        emitProgress(1, 1, title, true, text, zipPath)
     }
 
     private fun notification(
@@ -347,6 +441,7 @@ class ExportForegroundService : Service() {
             current: String,
             finished: Boolean,
             outputPath: String?,
+            zipPath: String?,
         ) {
             val payload = mapOf(
                 "files_done" to done,
@@ -355,6 +450,7 @@ class ExportForegroundService : Service() {
                 "fraction" to if (total <= 0) 0.0 else done.toDouble() / total.toDouble(),
                 "finished" to finished,
                 "output_path" to (outputPath ?: ""),
+                "zip_path" to (zipPath ?: ""),
             )
             mainHandler.post { progressSink?.success(payload) }
         }

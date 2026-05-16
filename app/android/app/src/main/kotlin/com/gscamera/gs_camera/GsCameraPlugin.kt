@@ -301,31 +301,39 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
     }
 
     private fun openExportLocation(ctx: Context, path: String): Boolean {
-        val targetUri = documentTreeUriForPath(path)
+        val targetUri = documentUriForPath(path)
+        val treeUri = documentTreeUriForPath(path)
+        val rootUri = DocumentsContract.buildTreeDocumentUri(
+            "com.android.externalstorage.documents",
+            "primary:Download/GS-Camera",
+        )
         val intents = listOf(
-            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
-            },
             Intent(Intent.ACTION_VIEW).apply {
                 setDataAndType(targetUri, "vnd.android.document/directory")
                 putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
+            },
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(treeUri, "vnd.android.document/directory")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
             },
             Intent(Intent.ACTION_VIEW).apply {
                 setClassName(
                     "com.google.android.documentsui",
                     "com.android.documentsui.files.FilesActivity",
                 )
-                data = targetUri
-                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
+                data = treeUri
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, treeUri)
             },
             Intent(Intent.ACTION_VIEW).apply {
                 data = Uri.parse("content://com.android.externalstorage.documents/root/primary")
-                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, rootUri)
             },
         )
         for (intent in intents) {
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            intent.putExtra("android.provider.extra.INITIAL_URI", Uri.parse(path))
             val ok = runCatching {
                 ctx.startActivity(intent)
             }.isSuccess
@@ -334,7 +342,23 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         return false
     }
 
+    private fun documentUriForPath(path: String): Uri {
+        val documentId = "primary:${relativeExportPath(path)}"
+        return DocumentsContract.buildDocumentUri(
+            "com.android.externalstorage.documents",
+            documentId,
+        )
+    }
+
     private fun documentTreeUriForPath(path: String): Uri {
+        val documentId = "primary:${relativeExportPath(path)}"
+        return DocumentsContract.buildTreeDocumentUri(
+            "com.android.externalstorage.documents",
+            documentId,
+        )
+    }
+
+    private fun relativeExportPath(path: String): String {
         val normalized = path.replace("\\", "/")
         val withoutFile = if (normalized.endsWith(".zip")) {
             normalized.substringBeforeLast("/", "")
@@ -347,11 +371,7 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         } else {
             "Download/GS-Camera"
         }
-        val documentId = "primary:$relative"
-        return DocumentsContract.buildTreeDocumentUri(
-            "com.android.externalstorage.documents",
-            documentId,
-        )
+        return relative.ifBlank { "Download/GS-Camera" }
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {

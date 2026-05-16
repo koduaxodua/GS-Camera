@@ -40,11 +40,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.paused ||
-        state == AppLifecycleState.detached) {
-      ref.invalidate(captureCoordinatorProvider);
-    } else if (state == AppLifecycleState.resumed &&
-        !_cameraPermissionGranted) {
+    if (state == AppLifecycleState.resumed && !_cameraPermissionGranted) {
       _ensurePermissions(request: false);
     }
   }
@@ -69,10 +65,6 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
     final coordinator = ref.watch(captureCoordinatorProvider);
     final coverage = ref.watch(coverageTrackerProvider);
     final selectedMode = ref.watch(selectedModeProvider);
-
-    if (coordinator.autoFinishExpired && !_finishing) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _finish());
-    }
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -123,12 +115,6 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                 ),
               ),
             ),
-            if (coordinator.autoFinishActive)
-              _AutoFinishSheet(
-                seconds: coordinator.autoFinishSeconds,
-                onAddMore: coordinator.addMore,
-                onFinish: _finish,
-              ),
             if (coordinator.state == CaptureState.preflight ||
                 coordinator.state == CaptureState.locking)
               const _BusyOverlay(text: 'Getting camera ready'),
@@ -253,25 +239,7 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
       );
       return;
     }
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Finish scan?'),
-        content: const Text(
-            'We will clean duplicates and export in the background.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Add more'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('Finish'),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) await _finish();
+    await _finish();
   }
 
   Future<void> _finish() async {
@@ -495,48 +463,6 @@ class _PermissionGate extends StatelessWidget {
                 ],
               ],
             ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _AutoFinishSheet extends StatelessWidget {
-  const _AutoFinishSheet({
-    required this.seconds,
-    required this.onAddMore,
-    required this.onFinish,
-  });
-
-  final int seconds;
-  final VoidCallback onAddMore;
-  final VoidCallback onFinish;
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: SafeArea(
-        child: Container(
-          margin: const EdgeInsets.all(18),
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.78),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: Colors.white24),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  'Scan complete. Export starts in $seconds',
-                  style: const TextStyle(color: Colors.white, fontSize: 16),
-                ),
-              ),
-              TextButton(onPressed: onAddMore, child: const Text('Add more')),
-              FilledButton(onPressed: onFinish, child: const Text('Finish')),
-            ],
           ),
         ),
       ),

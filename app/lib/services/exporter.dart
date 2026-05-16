@@ -142,21 +142,13 @@ class Exporter {
       try {
         final src = File(s.absolutePath);
         if (await src.exists()) {
-          try {
-            await src.rename(destPath);
-          } catch (_) {
-            // Cross-volume rename can fail; fall back to copy+delete.
-            await src.copy(destPath);
-            await src.delete();
-          }
+          await src.copy(destPath);
           // Track the new on-disk location so a re-export (e.g. user
           // toggling between folder and ZIP) can find the file again.
-          s.absolutePath = destPath;
           s.filename = '$padded.jpg';
         } else if (await File(destPath).exists()) {
           // Already at destination from a previous export attempt — make
           // sure the meta tracks it.
-          s.absolutePath = destPath;
           s.filename = '$padded.jpg';
         }
       } catch (e) {

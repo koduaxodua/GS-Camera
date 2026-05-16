@@ -123,6 +123,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
     final done = (event['files_done'] as num?)?.toInt() ?? 0;
     final total = (event['files_total'] as num?)?.toInt() ?? 1;
     final outputPath = event['output_path'] as String? ?? '';
+    final zipPath = event['zip_path'] as String? ?? '';
     final finished = event['finished'] == true;
     setState(() {
       _progress = ExportProgress(
@@ -137,11 +138,14 @@ class _ReviewScreenState extends State<ReviewScreen> {
         _exporting = false;
         _backgroundExport = false;
         if (outputPath.isNotEmpty) {
-          if (_exportAsZip) {
+          if (outputPath.endsWith('.zip')) {
             _exportedZip = File(outputPath);
           } else {
             _exportedDir = Directory(outputPath);
           }
+        }
+        if (zipPath.isNotEmpty) {
+          _exportedZip = File(zipPath);
         }
       }
     });
@@ -352,11 +356,13 @@ class _ReviewScreenState extends State<ReviewScreen> {
     }
 
     final outputPath = _exportedZip?.path ?? _exportedDir?.path ?? '—';
+    final zipPath = _exportedZip?.path;
+    final shownOutputPath = _exportedDir?.path ?? outputPath;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         InkWell(
-          onTap: () => _openExportLocation(outputPath),
+          onTap: () => _openExportLocation(shownOutputPath),
           borderRadius: BorderRadius.circular(12),
           child: Container(
             padding: const EdgeInsets.all(14),
@@ -378,8 +384,17 @@ class _ReviewScreenState extends State<ReviewScreen> {
                   ),
                   const SizedBox(height: 6),
                 ],
-                Text(outputPath,
+                Text(shownOutputPath,
                     style: const TextStyle(color: Colors.white, fontSize: 13)),
+                if (zipPath != null && zipPath != shownOutputPath) ...[
+                  const SizedBox(height: 6),
+                  const Text('ZIP',
+                      style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  const SizedBox(height: 4),
+                  Text(zipPath,
+                      style:
+                          const TextStyle(color: Colors.white, fontSize: 13)),
+                ],
                 const SizedBox(height: 8),
                 const Row(
                   children: [
@@ -397,7 +412,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         ),
         const SizedBox(height: 12),
         Text(
-          'Exports are saved as folders in Downloads / GS-Camera.',
+          'Exports are saved as a folder and a ZIP in Downloads / GS-Camera.',
           style: TextStyle(
             color: Colors.white.withValues(alpha: 0.7),
             fontSize: 13,
@@ -408,13 +423,16 @@ class _ReviewScreenState extends State<ReviewScreen> {
   }
 
   Widget _shareButton() {
-    final target = _exportedZip?.path ?? _exportedDir?.path;
-    if (target == null || _backgroundExport) return const SizedBox.shrink();
+    final folderTarget = _exportedDir?.path ?? _exportedZip?.parent.path;
+    final zipTarget = _exportedZip?.path;
+    if ((folderTarget == null && zipTarget == null) || _backgroundExport) {
+      return const SizedBox.shrink();
+    }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ElevatedButton.icon(
-          onPressed: () => _openExportLocation(target),
+          onPressed: () => _openExportLocation(folderTarget ?? zipTarget!),
           style: ElevatedButton.styleFrom(
             backgroundColor: Colors.lightGreenAccent,
             foregroundColor: Colors.black,
@@ -427,23 +445,23 @@ class _ReviewScreenState extends State<ReviewScreen> {
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
         ),
         const SizedBox(height: 8),
-        ElevatedButton.icon(
-          onPressed: () => Share.shareXFiles(
-            [XFile(target)],
-            subject: 'GS Camera session',
+        if (zipTarget != null)
+          ElevatedButton.icon(
+            onPressed: () => Share.shareXFiles(
+              [XFile(zipTarget)],
+              subject: 'GS Camera session',
+            ),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.white,
+              foregroundColor: Colors.black,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14)),
+            ),
+            icon: const Icon(Icons.ios_share),
+            label: const Text('Share .zip',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
           ),
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.white,
-            foregroundColor: Colors.black,
-            padding: const EdgeInsets.symmetric(vertical: 16),
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          ),
-          icon: const Icon(Icons.ios_share),
-          label: Text(_exportedZip != null ? 'Share .zip' : 'Share folder',
-              style:
-                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
-        ),
       ],
     );
   }

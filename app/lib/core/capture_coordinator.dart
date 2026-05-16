@@ -107,9 +107,6 @@ class CaptureCoordinator extends ChangeNotifier {
 
   bool _autoFinishActive = false;
   bool get autoFinishActive => _autoFinishActive;
-  int _autoFinishSeconds = 10;
-  int get autoFinishSeconds => _autoFinishSeconds;
-  bool get autoFinishExpired => _autoFinishActive && _autoFinishSeconds <= 0;
 
   bool get canManualFinish =>
       _state != CaptureState.exporting &&
@@ -127,11 +124,10 @@ class CaptureCoordinator extends ChangeNotifier {
   DateTime _lastHudNotifyAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _steadySince;
   DateTime _lastFocusRecalibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
-  Timer? _autoFinishStartTimer;
-  Timer? _autoFinishCountdownTimer;
   bool _disposing = false;
   bool _switchingCamera = false;
   bool _recalibratingFocus = false;
+  bool _liveDedupRunning = false;
   int _softFrameStreak = 0;
 
   Future<void> start() async {
@@ -201,6 +197,9 @@ class CaptureCoordinator extends ChangeNotifier {
     await sensors.stop();
     await camera.dispose();
     _setState(CaptureState.exporting);
+    for (var i = 0; i < 12 && _liveDedupRunning; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
     await _runPostCaptureMlDedup();
     _setState(CaptureState.complete);
     return shots.where((p) => p.keptInExport).toList();
@@ -229,7 +228,6 @@ class CaptureCoordinator extends ChangeNotifier {
     _updateSmartMode(sensor);
     _updatePhaseAndCamera(sensor);
     _updateGuidance(sensor);
-    _maybeAutoFinish();
     _maybeFireSmartShutter(sensor);
     _notifyThrottled();
   }
@@ -312,7 +310,7 @@ class CaptureCoordinator extends ChangeNotifier {
   }
 
   void _maybeFireSmartShutter(SensorSnapshot sensor) {
-    if (_switchingCamera || _autoFinishActive) return;
+    if (_switchingCamera) return;
     final now = DateTime.now();
     if (now.difference(_lastShotAt) < _minShotInterval) return;
 
@@ -374,7 +372,7 @@ class CaptureCoordinator extends ChangeNotifier {
     return _activeCamera == CameraLensType.main &&
         sensor.angularSpeedDegPerSec < 8 &&
         yawDelta > _qualityStepForMode() &&
-        targetNeedsQuality &&
+        (targetNeedsQuality || coverageTracker.value.coveragePercent >= 97) &&
         _latestSharpness >= _mainSharpnessThreshold() &&
         _latestTexture >= 0.12;
   }
@@ -444,6 +442,7 @@ class CaptureCoordinator extends ChangeNotifier {
       developer.log(
           'capture_saved count=${shots.length} camera=$cameraLabel path=$path',
           name: 'gs_camera.capture');
+      _scheduleLiveDedup(meta);
       final recordedCamera = CameraLensType.fromExportName(cameraLabel);
       _activeCamera = recordedCamera;
       _lastYawByCamera[recordedCamera] = sensor.azimuthDeg;
@@ -578,28 +577,8 @@ class CaptureCoordinator extends ChangeNotifier {
     _guidance = guidance;
   }
 
-  void _maybeAutoFinish() {
-    if (_autoFinishActive || coverageTracker.value.coveragePercent < 97) {
-      return;
-    }
-    if (DateTime.now().difference(_lastShotAt).inSeconds < 4) return;
-    _autoFinishActive = true;
-    _autoFinishSeconds = 10;
-    _autoFinishCountdownTimer?.cancel();
-    _autoFinishCountdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
-      _autoFinishSeconds--;
-      if (_autoFinishSeconds <= 0) {
-        _autoFinishCountdownTimer?.cancel();
-      }
-      notifyListeners();
-    });
-  }
-
   void _cancelAutoFinish() {
     _autoFinishActive = false;
-    _autoFinishSeconds = 10;
-    _autoFinishStartTimer?.cancel();
-    _autoFinishCountdownTimer?.cancel();
   }
 
   Future<void> _runPostCaptureMlDedup() async {
@@ -646,6 +625,59 @@ class CaptureCoordinator extends ChangeNotifier {
       }
       await Future<void>.delayed(const Duration(milliseconds: 75));
     }
+  }
+
+  void _scheduleLiveDedup(PhotoMeta meta) {
+    if (shots.length < 5 || _liveDedupRunning || !meta.keptInExport) return;
+    _liveDedupRunning = true;
+    unawaited(() async {
+      await Future<void>.delayed(const Duration(milliseconds: 900));
+      try {
+        final file = File(meta.absolutePath);
+        if (!meta.keptInExport || !await file.exists()) return;
+        final embedding = await embedder.embedJpeg(await file.readAsBytes());
+        if (embedding == null) return;
+        meta.embedding = embedding;
+        PhotoMeta? duplicate;
+        var bestSim = -1.0;
+        for (final existing in shots.where((p) => p.keptInExport)) {
+          if (identical(existing, meta)) continue;
+          if (_shortestArc(existing.azimuthDeg, meta.azimuthDeg) > 8) continue;
+          if ((existing.elevationDeg - meta.elevationDeg).abs() > 14) continue;
+          if (existing.embedding == null) {
+            final existingFile = File(existing.absolutePath);
+            if (!await existingFile.exists()) continue;
+            existing.embedding =
+                await embedder.embedJpeg(await existingFile.readAsBytes());
+          }
+          if (existing.embedding == null) continue;
+          final sim = EmbeddingService.cosineSimilarity(
+            embedding,
+            existing.embedding!,
+          );
+          if (sim > bestSim) {
+            bestSim = sim;
+            duplicate = existing;
+          }
+        }
+        final threshold = math.max(mode.similarityThreshold + 0.03, 0.94);
+        if (duplicate == null || bestSim < threshold) return;
+        final replace = meta.sharpness > duplicate.sharpness * 1.08;
+        await _discardPhoto(replace ? duplicate : meta);
+        _dedupedCount++;
+        developer.log(
+          'live_dedup removed=${replace ? duplicate.index : meta.index} '
+          'kept=${replace ? meta.index : duplicate.index} '
+          'sim=${bestSim.toStringAsFixed(3)}',
+          name: 'gs_camera.capture',
+        );
+        _notifyThrottled(force: true);
+      } catch (e) {
+        developer.log('live_dedup_skipped error=$e', name: 'gs_camera.capture');
+      } finally {
+        _liveDedupRunning = false;
+      }
+    }());
   }
 
   Future<void> _discardPhoto(PhotoMeta meta) async {

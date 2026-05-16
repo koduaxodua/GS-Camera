@@ -20,7 +20,7 @@ final sensorManagerProvider = Provider<SensorManager>((ref) {
 });
 
 final captureCoordinatorProvider =
-    ChangeNotifierProvider.autoDispose<CaptureCoordinator>((ref) {
+    ChangeNotifierProvider<CaptureCoordinator>((ref) {
   final coordinator = CaptureCoordinator(
     selectedMode: ref.read(selectedModeProvider),
     cameraService: ref.read(cameraServiceProvider),
