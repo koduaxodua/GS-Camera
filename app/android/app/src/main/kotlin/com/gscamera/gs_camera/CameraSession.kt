@@ -467,8 +467,17 @@ class CameraSession(
 
         val out = File(captureDir(), "tmp_${System.currentTimeMillis()}.jpg")
         val completed = AtomicBoolean(false)
+        val timeoutRunnable = Runnable {
+            if (!completed.compareAndSet(false, true)) return@Runnable
+            Log.w(TAG, "still capture timed out; releasing capture lock")
+            runCatching { jpegReader?.setOnImageAvailableListener(null, null) }
+            isCapturing.set(false)
+            onResult(null, RuntimeException("still capture timed out"))
+        }
+        handler.postDelayed(timeoutRunnable, 5000)
         fun finish(path: String?, err: Throwable?) {
             if (!completed.compareAndSet(false, true)) return
+            handler.removeCallbacks(timeoutRunnable)
             runCatching { jpegReader?.setOnImageAvailableListener(null, null) }
             isCapturing.set(false)
             onResult(path, err)

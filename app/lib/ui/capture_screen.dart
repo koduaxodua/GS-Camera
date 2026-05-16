@@ -116,24 +116,25 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
               const _BusyOverlay(text: 'Getting camera ready'),
             if (coordinator.state == CaptureState.exporting)
               const _BusyOverlay(text: 'Reducing duplicate photos'),
-            if (coordinator.canManualFinish)
-              Positioned(
-                right: 18,
-                bottom: 22,
-                child: SafeArea(
-                  child: Semantics(
-                    button: true,
-                    label: 'Finish scan',
-                    child: FloatingActionButton.extended(
-                      backgroundColor: Colors.white,
-                      foregroundColor: Colors.black,
-                      onPressed: _confirmFinish,
-                      icon: const Icon(Icons.check),
-                      label: const Text('Finish'),
-                    ),
+            // Finish button: always visible. _confirmFinish will show a
+            // SnackBar if no photos have been captured yet.
+            Positioned(
+              right: 18,
+              bottom: 22,
+              child: SafeArea(
+                child: Semantics(
+                  button: true,
+                  label: 'Finish scan',
+                  child: FloatingActionButton.extended(
+                    backgroundColor: Colors.white,
+                    foregroundColor: Colors.black,
+                    onPressed: _confirmFinish,
+                    icon: const Icon(Icons.check),
+                    label: const Text('Finish'),
                   ),
                 ),
               ),
+            ),
             const OnboardingOverlay(),
           ],
         ],

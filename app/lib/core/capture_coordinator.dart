@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
+import 'dart:developer' as developer;
 import 'package:path_provider/path_provider.dart';
 
 import '../models/capture_mode.dart';
@@ -160,13 +161,10 @@ class CaptureCoordinator extends ChangeNotifier {
   Future<void> forceCapture() async {
     final sensor = _lastSensor;
     if (sensor == null || _state != CaptureState.capturing) return;
-    final desiredCamera = _phase == CapturePhase.detailLock && hasTeleCamera
-        ? CameraLensType.tele
-        : CameraLensType.main;
-    if (_activeCamera != desiredCamera) {
-      await _switchCamera(desiredCamera);
-      if (_state != CaptureState.capturing) return;
-    }
+    // Force capture should always use the currently active camera and
+    // should not implicitly switch lenses. This avoids stalls when a
+    // desired lens (e.g. tele) isn't present.
+    developer.log('forceCapture invoked on active=${_activeCamera.name}', name: 'gs_camera.capture');
     await _fireCapture(sensor, force: true);
   }
 
@@ -256,6 +254,9 @@ class CaptureCoordinator extends ChangeNotifier {
         : coverage < 97
             ? CapturePhase.qualityUpgrade
             : CapturePhase.basicFill;
+    if (_phase != nextPhase) {
+      developer.log('phase_change from=${_phase.name} to=${nextPhase.name} coverage=${coverage.toStringAsFixed(1)}', name: 'gs_camera.capture');
+    }
     _phase = nextPhase;
 
     final desiredCamera = switch (nextPhase) {
@@ -273,8 +274,10 @@ class CaptureCoordinator extends ChangeNotifier {
     _switchingCamera = true;
     try {
       _setState(CaptureState.locking);
+      final old = _activeCamera;
       _config = await camera.switchCamera(cameraType);
       _activeCamera = _config?.lensType ?? cameraType;
+      developer.log('camera_switch from=${old.name} to=${_activeCamera.name}', name: 'gs_camera.capture');
       _setState(CaptureState.capturing);
     } catch (e) {
       debugPrint('camera switch failed: $e');
@@ -373,7 +376,21 @@ class CaptureCoordinator extends ChangeNotifier {
     try {
       final path = await camera.capture();
       final filename = path.split(RegExp(r'[\\/]')).last;
+      // Decide camera label carefully: do not label as 'tele' unless the
+      // current CameraConfig reports a genuine tele lens available.
       final cfg = _config;
+      String cameraLabel;
+      if (cfg != null) {
+        if (cfg.teleAvailableFromInventory) {
+          cameraLabel = cfg.cameraName;
+        } else {
+          // If tele is not actually available, never label photos as tele.
+          cameraLabel = cfg.cameraName == 'tele' ? 'main' : cfg.cameraName;
+        }
+      } else {
+        cameraLabel = _activeCamera.exportName;
+      }
+
       final meta = PhotoMeta(
         index: shots.length + 1,
         filename: filename,
@@ -392,7 +409,7 @@ class CaptureCoordinator extends ChangeNotifier {
         exposureLockValue: cfg?.exposureValue ?? 0,
         iso: cfg?.iso ?? 0,
         shutterSpeedNs: cfg?.shutterSpeedNs ?? 0,
-        camera: cfg?.cameraName ?? _activeCamera.exportName,
+          camera: cameraLabel,
       );
       shots.add(meta);
       final recordedCamera = CameraLensType.fromExportName(

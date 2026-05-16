@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'dart:developer' as developer;
 
 import '../models/capture_mode.dart';
 
@@ -185,12 +186,17 @@ class CoverageTracker extends StateNotifier<CoverageState> {
     );
     for (final id in ids) {
       final bin = _bins[id] ?? _emptyBinForId(id);
-      _bins[id] = bin.copyWithFrame(
+      final newBin = bin.copyWithFrame(
         camera: camera,
         qualityAccepted: qualityAccepted,
         sharpness: sharpness,
         textureScore: textureScore,
       );
+      if (bin.color != newBin.color) {
+        developer.log('bin_state_change id=$id from=${bin.color.name} to=${newBin.color.name} main=${newBin.mainCount} uw=${newBin.uwCount} tele=${newBin.teleCount} sharp=${newBin.bestSharpness}',
+            name: 'gs_camera.coverage');
+      }
+      _bins[id] = newBin;
     }
     _emit();
   }

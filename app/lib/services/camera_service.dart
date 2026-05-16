@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'package:flutter/services.dart';
 
 import '../core/coverage_tracker.dart';
@@ -149,8 +150,43 @@ class CameraConfig {
   final List<CameraInventoryItem> cameraInventory;
 
   CameraLensType get lensType => CameraLensType.fromExportName(cameraName);
-  bool get hasTeleCamera => availableLenses.contains(CameraLensType.tele);
+
+  /// Legacy field: availableLenses reflects native labels. We compute a more
+  /// conservative `hasTeleCamera` using actual focal lengths so the app
+  /// doesn't try to use a Tele mode when no reasonably longer focal exists.
+  bool get hasTeleCamera => teleAvailableFromInventory ||
+      availableLenses.contains(CameraLensType.tele);
+
   bool supports(CameraLensType lens) => availableLenses.contains(lens);
+
+  /// Determine tele availability from actual camera inventory focal lengths.
+  /// Tele is considered present only if one of the other cameras has a
+  /// focal length noticeably longer than the main lens (delta > 6.0 mm).
+  bool get teleAvailableFromInventory {
+    try {
+      if (cameraInventory.isEmpty) return false;
+      // Find main focal length from inventory; fall back to top-level focal.
+      final mainItem = cameraInventory.firstWhere(
+        (c) => c.cameraName == 'main',
+        orElse: () => cameraInventory.first,
+      );
+      final mainFocal = mainItem.focalLengthMm > 0
+          ? mainItem.focalLengthMm
+          : focalLengthMm;
+      for (final item in cameraInventory) {
+        if (item.cameraId == mainItem.cameraId) continue;
+        final delta = item.focalLengthMm - mainFocal;
+        if (delta > 6.0) {
+          developer.log('tele detected: ${item.cameraName} focal=${item.focalLengthMm}mm main=${mainFocal}mm', name: 'gs_camera');
+          return true;
+        }
+      }
+      return false;
+    } catch (e) {
+      developer.log('teleAvailableFromInventory error: $e', name: 'gs_camera');
+      return false;
+    }
+  }
 
   static List<CameraLensType> _parseAvailableLenses(Object? value) {
     final raw = value is List ? value : const ['main'];
