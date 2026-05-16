@@ -117,7 +117,7 @@ class CaptureCoordinator extends ChangeNotifier {
       _state != CaptureState.failed;
 
   static const _hudNotifyInterval = Duration(milliseconds: 66);
-  static const _minShotInterval = Duration(milliseconds: 650);
+  static const _minShotInterval = Duration(milliseconds: 500);
 
   final Map<CameraLensType, double> _lastYawByCamera = {};
   final Map<CameraLensType, DateTime> _lastShotByCamera = {};
@@ -126,10 +126,13 @@ class CaptureCoordinator extends ChangeNotifier {
   DateTime _lastShotAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastHudNotifyAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _steadySince;
+  DateTime _lastFocusRecalibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _autoFinishStartTimer;
   Timer? _autoFinishCountdownTimer;
   bool _disposing = false;
   bool _switchingCamera = false;
+  bool _recalibratingFocus = false;
+  int _softFrameStreak = 0;
 
   Future<void> start() async {
     if (_disposing) return;
@@ -213,6 +216,7 @@ class CaptureCoordinator extends ChangeNotifier {
     _latestSharpness = (variance / 160.0).clamp(0.0, 1.0);
     _latestTexture =
         TextureAnalyzer.score(frame.luma, frame.width, frame.height);
+    _maybeRecalibrateFocus();
   }
 
   void _onSensor(SensorSnapshot sensor) {
@@ -312,16 +316,16 @@ class CaptureCoordinator extends ChangeNotifier {
     final now = DateTime.now();
     if (now.difference(_lastShotAt) < _minShotInterval) return;
 
-    final commonLuminanceOk = _latestLuminance >= 30 && _latestLuminance <= 240;
+    final commonLuminanceOk = _latestLuminance >= 20 && _latestLuminance <= 248;
     if (!commonLuminanceOk) return;
 
-    final speedLimit = _phase == CapturePhase.detailLock ? 2.0 : 4.0;
+    final speedLimit = _phase == CapturePhase.detailLock ? 3.0 : 8.0;
     if (sensor.angularSpeedDegPerSec >= speedLimit) {
       _steadySince = null;
       return;
     }
     _steadySince ??= now;
-    if (now.difference(_steadySince!) < const Duration(milliseconds: 400)) {
+    if (now.difference(_steadySince!) < const Duration(milliseconds: 220)) {
       return;
     }
 
@@ -350,11 +354,11 @@ class CaptureCoordinator extends ChangeNotifier {
         ),
       CapturePhase.detailLock => hasTeleCamera &&
           _activeCamera == CameraLensType.tele &&
-          sensor.angularSpeedDegPerSec < 2 &&
-          yawDelta > 4 &&
+          sensor.angularSpeedDegPerSec < 3 &&
+          yawDelta > 3 &&
           targetNeedsDetail &&
-          _latestSharpness > 0.8 &&
-          _latestTexture > 0.15,
+          _latestSharpness >= 0.72 &&
+          _latestTexture >= 0.10,
     };
 
     if (shouldCapture) {
@@ -368,19 +372,24 @@ class CaptureCoordinator extends ChangeNotifier {
     required bool targetNeedsQuality,
   }) {
     return _activeCamera == CameraLensType.main &&
-        sensor.angularSpeedDegPerSec < 4 &&
+        sensor.angularSpeedDegPerSec < 8 &&
         yawDelta > _qualityStepForMode() &&
         targetNeedsQuality &&
-        _latestSharpness > 0.7 &&
-        _latestTexture > 0.2;
+        _latestSharpness >= _mainSharpnessThreshold() &&
+        _latestTexture >= 0.12;
   }
 
   double _qualityStepForMode() {
     return switch (mode) {
-      CaptureMode.room => 8,
-      CaptureMode.object => 6,
-      CaptureMode.spherical => 10,
+      CaptureMode.room => 5,
+      CaptureMode.object => 4,
+      CaptureMode.spherical => 6,
     };
+  }
+
+  double _mainSharpnessThreshold() {
+    if (shots.length < 10) return 0.50;
+    return 0.58;
   }
 
   double _yawDeltaFor(CameraLensType cameraType, double yaw) {
@@ -456,12 +465,12 @@ class CaptureCoordinator extends ChangeNotifier {
   }
 
   bool _qualityAcceptedFor(CameraLensType cameraType) {
-    final lumOk = _latestLuminance >= 30 && _latestLuminance <= 240;
-    final textureThreshold = cameraType == CameraLensType.uw ? 0.15 : 0.2;
+    final lumOk = _latestLuminance >= 20 && _latestLuminance <= 248;
+    final textureThreshold = cameraType == CameraLensType.uw ? 0.10 : 0.12;
     final sharpThreshold = switch (cameraType) {
-      CameraLensType.uw => 0.6,
-      CameraLensType.main => 0.7,
-      CameraLensType.tele => 0.8,
+      CameraLensType.uw => 0.45,
+      CameraLensType.main => _mainSharpnessThreshold(),
+      CameraLensType.tele => 0.72,
     };
     return lumOk &&
         _latestSharpness >= sharpThreshold &&
@@ -476,7 +485,12 @@ class CaptureCoordinator extends ChangeNotifier {
       ));
       return;
     }
-    if (sensor.angularSpeedDegPerSec > 4) {
+    if (_recalibratingFocus) {
+      _setGuidance(const CaptureGuidance(
+          text: 'Improving focus', iconName: 'center_focus_strong'));
+      return;
+    }
+    if (sensor.angularSpeedDegPerSec > 8) {
       _setGuidance(const CaptureGuidance(text: 'Slow down', iconName: 'speed'));
       return;
     }
@@ -485,32 +499,21 @@ class CaptureCoordinator extends ChangeNotifier {
           const CaptureGuidance(text: 'Hold steady', iconName: 'pan_tool'));
       return;
     }
-    if (_latestLuminance > 0 && _latestLuminance < 30) {
+    if (_latestLuminance > 0 && _latestLuminance < 20) {
       _setGuidance(
           const CaptureGuidance(text: 'Too dark', iconName: 'dark_mode'));
       return;
     }
-    if (_latestLuminance > 240) {
+    if (_latestLuminance > 248) {
       _setGuidance(
           const CaptureGuidance(text: 'Bright light', iconName: 'wb_sunny'));
       return;
     }
-    final bin = coverageTracker.binAt(
-      mode: mode,
-      azimuthDeg: sensor.azimuthDeg,
-      elevationDeg: sensor.elevationDeg,
-    );
-    if (bin.isQualityCovered) {
-      _setGuidance(
-          const CaptureGuidance(text: 'Covered', iconName: 'check_circle'));
+    if (_latestSharpness > 0 && _latestSharpness < 0.35) {
+      _setGuidance(const CaptureGuidance(
+          text: 'Focus soft', iconName: 'center_focus_weak'));
       return;
     }
-    final target = coverageTracker.nearestUncoveredAzimuth(
-      azimuthDeg: sensor.azimuthDeg,
-      band: CoverageTracker.roomElevationBand(sensor.elevationDeg),
-    );
-    final targetDeg = target * 10.0 + 5;
-    final delta = _signedArc(sensor.azimuthDeg, targetDeg);
     if (sensor.elevationDeg > 45) {
       _setGuidance(
           const CaptureGuidance(text: 'Look down', iconName: 'arrow_downward'));
@@ -518,11 +521,52 @@ class CaptureCoordinator extends ChangeNotifier {
       _setGuidance(
           const CaptureGuidance(text: 'Look up', iconName: 'arrow_upward'));
     } else {
-      _setGuidance(CaptureGuidance(
-        text: delta >= 0 ? 'Look right' : 'Look left',
-        iconName: delta >= 0 ? 'turn_right' : 'turn_left',
-        arrowDegrees: delta,
+      _setGuidance(const CaptureGuidance(
+        text: 'Ready',
+        iconName: 'radio_button_checked',
       ));
+    }
+  }
+
+  void _maybeRecalibrateFocus() {
+    if (_disposing ||
+        _switchingCamera ||
+        _recalibratingFocus ||
+        _state != CaptureState.capturing ||
+        _activeCamera != CameraLensType.main) {
+      return;
+    }
+    if (_latestSharpness <= 0) return;
+    if (_latestSharpness < 0.42) {
+      _softFrameStreak++;
+    } else {
+      _softFrameStreak = 0;
+      return;
+    }
+    final now = DateTime.now();
+    final earlySession = shots.length < 8;
+    final badlySoft = _latestSharpness < 0.28;
+    if (_softFrameStreak < 5 || (!earlySession && !badlySoft)) return;
+    if (now.difference(_lastFocusRecalibrationAt).inSeconds < 4) return;
+    _lastFocusRecalibrationAt = now;
+    unawaited(_recalibrateFocus('soft_preview'));
+  }
+
+  Future<void> _recalibrateFocus(String reason) async {
+    _recalibratingFocus = true;
+    developer.log(
+        'focus_recalibrate_start reason=$reason sharpness=$_latestSharpness shots=${shots.length}',
+        name: 'gs_camera.capture');
+    try {
+      _config = await camera.recalibrate();
+      developer.log('focus_recalibrate_done reason=$reason',
+          name: 'gs_camera.capture');
+    } catch (e) {
+      developer.log('focus_recalibrate_failed reason=$reason error=$e',
+          name: 'gs_camera.capture');
+    } finally {
+      _softFrameStreak = 0;
+      _recalibratingFocus = false;
     }
   }
 

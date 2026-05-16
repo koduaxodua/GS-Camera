@@ -37,7 +37,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Directory? _exportedDir;
   File? _exportedZip;
   bool _exporting = false;
-  bool _exportAsZip = false;
+  bool _exportAsZip = true;
   ExportProgress? _progress;
   int _manualDeletes = 0;
   bool _backgroundExport = false;

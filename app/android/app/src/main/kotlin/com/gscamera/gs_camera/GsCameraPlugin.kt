@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.DocumentsContract
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -295,21 +296,26 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
     }
 
     private fun openExportLocation(ctx: Context, path: String): Boolean {
+        val targetUri = documentTreeUriForPath(path)
         val intents = listOf(
-            Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(
-                    Uri.parse("content://com.android.externalstorage.documents/root/primary"),
-                    "vnd.android.document/root",
-                )
+            Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
             },
-            Intent("android.intent.action.VIEW").apply {
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(targetUri, "vnd.android.document/directory")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
+            },
+            Intent(Intent.ACTION_VIEW).apply {
                 setClassName(
                     "com.google.android.documentsui",
                     "com.android.documentsui.files.FilesActivity",
                 )
+                data = targetUri
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
             },
             Intent(Intent.ACTION_VIEW).apply {
                 data = Uri.parse("content://com.android.externalstorage.documents/root/primary")
+                putExtra(DocumentsContract.EXTRA_INITIAL_URI, targetUri)
             },
         )
         for (intent in intents) {
@@ -321,6 +327,26 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
             if (ok) return true
         }
         return false
+    }
+
+    private fun documentTreeUriForPath(path: String): Uri {
+        val normalized = path.replace("\\", "/")
+        val withoutFile = if (normalized.endsWith(".zip")) {
+            normalized.substringBeforeLast("/", "")
+        } else {
+            normalized
+        }
+        val marker = "/storage/emulated/0/"
+        val relative = if (withoutFile.startsWith(marker)) {
+            withoutFile.removePrefix(marker)
+        } else {
+            "Android/data/com.gscamera.gs_camera/files/Pictures/GSCamera"
+        }
+        val documentId = "primary:$relative"
+        return DocumentsContract.buildTreeDocumentUri(
+            "com.android.externalstorage.documents",
+            documentId,
+        )
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
