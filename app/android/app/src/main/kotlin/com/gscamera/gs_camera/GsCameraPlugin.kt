@@ -2,6 +2,8 @@ package com.gscamera.gs_camera
 
 import android.app.Activity
 import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
@@ -203,6 +205,10 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
                     )
                 )
             }
+            "openExportLocation" -> {
+                val path = call.argument<String>("path") ?: ""
+                result.success(openExportLocation(ctx, path))
+            }
             else -> result.notImplemented()
         }
     }
@@ -286,6 +292,35 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
 
     private fun intrinsicsFor(ctx: Context, cameraIndex: Int): Map<String, Double> {
         return CameraSession.intrinsicsFor(ctx, cameraIndex)
+    }
+
+    private fun openExportLocation(ctx: Context, path: String): Boolean {
+        val intents = listOf(
+            Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(
+                    Uri.parse("content://com.android.externalstorage.documents/root/primary"),
+                    "vnd.android.document/root",
+                )
+            },
+            Intent("android.intent.action.VIEW").apply {
+                setClassName(
+                    "com.google.android.documentsui",
+                    "com.android.documentsui.files.FilesActivity",
+                )
+            },
+            Intent(Intent.ACTION_VIEW).apply {
+                data = Uri.parse("content://com.android.externalstorage.documents/root/primary")
+            },
+        )
+        for (intent in intents) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            intent.putExtra("android.provider.extra.INITIAL_URI", Uri.parse(path))
+            val ok = runCatching {
+                ctx.startActivity(intent)
+            }.isSuccess
+            if (ok) return true
+        }
+        return false
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {

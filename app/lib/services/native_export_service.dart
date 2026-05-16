@@ -53,4 +53,13 @@ class NativeExportService {
       asZip: result['as_zip'] as bool,
     );
   }
+
+  static Future<bool> openExportLocation(String path) async {
+    if (!Platform.isAndroid) return false;
+    final opened = await _method.invokeMethod<bool>(
+      'openExportLocation',
+      {'path': path},
+    );
+    return opened ?? false;
+  }
 }

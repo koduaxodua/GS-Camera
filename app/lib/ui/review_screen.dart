@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../models/capture_mode.dart';
@@ -39,11 +41,18 @@ class _ReviewScreenState extends State<ReviewScreen> {
   ExportProgress? _progress;
   int _manualDeletes = 0;
   bool _backgroundExport = false;
+  StreamSubscription<Map<String, dynamic>>? _nativeExportSub;
 
   @override
   void initState() {
     super.initState();
     _runExport();
+  }
+
+  @override
+  void dispose() {
+    _nativeExportSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _runExport() async {
@@ -58,6 +67,9 @@ class _ReviewScreenState extends State<ReviewScreen> {
     if (Platform.isAndroid) {
       try {
         final sessionInfo = await _sessionInfo();
+        await _nativeExportSub?.cancel();
+        _nativeExportSub =
+            NativeExportService.progress.listen(_onNativeExportProgress);
         final started = await NativeExportService.start(
           shots: widget.shots,
           sessionInfo: sessionInfo,
@@ -65,7 +77,7 @@ class _ReviewScreenState extends State<ReviewScreen> {
         );
         if (!mounted) return;
         setState(() {
-          _exporting = false;
+          _exporting = true;
           _backgroundExport = true;
           if (started.asZip) {
             _exportedZip = File(started.outputPath);
@@ -75,6 +87,8 @@ class _ReviewScreenState extends State<ReviewScreen> {
         });
         return;
       } catch (e) {
+        await _nativeExportSub?.cancel();
+        _nativeExportSub = null;
         // If native foreground export cannot start, keep the old in-app
         // exporter as a fallback.
         // ignore: avoid_print
@@ -101,6 +115,39 @@ class _ReviewScreenState extends State<ReviewScreen> {
           _exportedZip = p.finalArchive;
         }
       });
+    }
+  }
+
+  void _onNativeExportProgress(Map<String, dynamic> event) {
+    if (!mounted) return;
+    final done = (event['files_done'] as num?)?.toInt() ?? 0;
+    final total = (event['files_total'] as num?)?.toInt() ?? 1;
+    final outputPath = event['output_path'] as String? ?? '';
+    final finished = event['finished'] == true;
+    setState(() {
+      _progress = ExportProgress(
+        filesDone: done,
+        filesTotal: total <= 0 ? 1 : total,
+        currentName: event['current_name'] as String? ?? '',
+        fraction: (event['fraction'] as num?)?.toDouble().clamp(0.0, 1.0) ??
+            (total <= 0 ? 0 : done / total),
+        finished: finished,
+      );
+      if (finished) {
+        _exporting = false;
+        _backgroundExport = false;
+        if (outputPath.isNotEmpty) {
+          if (_exportAsZip) {
+            _exportedZip = File(outputPath);
+          } else {
+            _exportedDir = Directory(outputPath);
+          }
+        }
+      }
+    });
+    if (finished) {
+      _nativeExportSub?.cancel();
+      _nativeExportSub = null;
     }
   }
 
@@ -308,29 +355,44 @@ class _ReviewScreenState extends State<ReviewScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Container(
-          padding: const EdgeInsets.all(14),
-          decoration: BoxDecoration(
-            color: const Color(0xFF1B1B20),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('Saved to',
-                  style: TextStyle(color: Colors.white70, fontSize: 12)),
-              const SizedBox(height: 4),
-              if (_backgroundExport) ...[
-                const Text(
-                  'Export continues in notifications.',
-                  style:
-                      TextStyle(color: Colors.lightGreenAccent, fontSize: 12),
+        InkWell(
+          onTap: () => _openExportLocation(outputPath),
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: const Color(0xFF1B1B20),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('Saved to',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+                const SizedBox(height: 4),
+                if (_backgroundExport) ...[
+                  const Text(
+                    'Export continues in notifications.',
+                    style:
+                        TextStyle(color: Colors.lightGreenAccent, fontSize: 12),
+                  ),
+                  const SizedBox(height: 6),
+                ],
+                Text(outputPath,
+                    style: const TextStyle(color: Colors.white, fontSize: 13)),
+                const SizedBox(height: 8),
+                const Row(
+                  children: [
+                    Icon(Icons.folder_open, color: Colors.white70, size: 16),
+                    SizedBox(width: 6),
+                    Text(
+                      'Tap to open location',
+                      style: TextStyle(color: Colors.white70, fontSize: 12),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 6),
               ],
-              Text(outputPath,
-                  style: const TextStyle(color: Colors.white, fontSize: 13)),
-            ],
+            ),
           ),
         ),
         const SizedBox(height: 12),
@@ -364,20 +426,62 @@ class _ReviewScreenState extends State<ReviewScreen> {
   Widget _shareButton() {
     final target = _exportedZip?.path ?? _exportedDir?.path;
     if (target == null || _backgroundExport) return const SizedBox.shrink();
-    return ElevatedButton.icon(
-      onPressed: () => Share.shareXFiles(
-        [XFile(target)],
-        subject: 'GS Camera session',
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ElevatedButton.icon(
+          onPressed: () => _openExportLocation(target),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.lightGreenAccent,
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          icon: const Icon(Icons.folder_open),
+          label: const Text('Open export location',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+        const SizedBox(height: 8),
+        ElevatedButton.icon(
+          onPressed: () => Share.shareXFiles(
+            [XFile(target)],
+            subject: 'GS Camera session',
+          ),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.white,
+            foregroundColor: Colors.black,
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          ),
+          icon: const Icon(Icons.ios_share),
+          label: Text(_exportedZip != null ? 'Share .zip' : 'Share folder',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _openExportLocation(String path) async {
+    var opened = false;
+    try {
+      opened = await NativeExportService.openExportLocation(path);
+    } catch (_) {
+      opened = false;
+    }
+    if (!mounted) return;
+    await Clipboard.setData(ClipboardData(text: path));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          opened
+              ? 'Opened Files. Path copied too.'
+              : 'Path copied. Open Files and paste it if needed.',
+        ),
       ),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: Colors.white,
-        foregroundColor: Colors.black,
-        padding: const EdgeInsets.symmetric(vertical: 16),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-      ),
-      icon: const Icon(Icons.ios_share),
-      label: Text(_exportedZip != null ? 'Share .zip' : 'Share folder',
-          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
     );
   }
 }
