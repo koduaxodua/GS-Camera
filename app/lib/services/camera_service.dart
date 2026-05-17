@@ -55,6 +55,14 @@ class CameraService {
     await _method.invokeMethod<void>('dispose');
   }
 
+  Future<void> startVibrationSweep() async {
+    await _method.invokeMethod<void>('startVibrationSweep');
+  }
+
+  Future<void> stopVibrationSweep() async {
+    await _method.invokeMethod<void>('stopVibrationSweep');
+  }
+
   Future<double> getPreviewLuminance() async => _lastPreviewLuminance;
 
   Future<List<CameraInventoryItem>> getCameraList() async {

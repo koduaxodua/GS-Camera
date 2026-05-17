@@ -12,6 +12,10 @@ import android.hardware.SensorManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import android.view.Surface
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
@@ -215,7 +219,40 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
                 val path = call.argument<String>("path") ?: ""
                 result.success(openExportLocation(ctx, path))
             }
+            "startVibrationSweep" -> {
+                startVibrationSweep(ctx)
+                result.success(null)
+            }
+            "stopVibrationSweep" -> {
+                stopVibrationSweep(ctx)
+                result.success(null)
+            }
             else -> result.notImplemented()
+        }
+    }
+
+    private fun startVibrationSweep(ctx: Context) {
+        val timings = longArrayOf(0, 90, 18, 90, 18, 130, 24)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255, 0)
+            vibrator(ctx)?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, 1))
+        } else {
+            @Suppress("DEPRECATION")
+            vibrator(ctx)?.vibrate(timings, 1)
+        }
+    }
+
+    private fun stopVibrationSweep(ctx: Context) {
+        vibrator(ctx)?.cancel()
+    }
+
+    private fun vibrator(ctx: Context): Vibrator? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            val mgr = ctx.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as VibratorManager
+            mgr.defaultVibrator
+        } else {
+            @Suppress("DEPRECATION")
+            ctx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
         }
     }
 

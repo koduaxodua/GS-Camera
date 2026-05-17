@@ -104,9 +104,12 @@ class CaptureCoordinator extends ChangeNotifier {
   int get keptCount => shots.where((p) => p.keptInExport).length;
   bool get hasPhotos => shots.isNotEmpty;
   bool get hasTeleCamera => _config?.hasTeleCamera ?? false;
+  bool get hasUwCamera => _config?.supports(CameraLensType.uw) ?? false;
 
   bool _autoFinishActive = false;
   bool get autoFinishActive => _autoFinishActive;
+  bool _vibrationSweepActive = false;
+  bool get vibrationSweepActive => _vibrationSweepActive;
 
   bool get canManualFinish =>
       _state != CaptureState.exporting &&
@@ -169,6 +172,21 @@ class CaptureCoordinator extends ChangeNotifier {
     await _fireCapture(sensor, force: true);
   }
 
+  Future<void> toggleVibrationSweep() async {
+    if (_vibrationSweepActive) {
+      await camera.stopVibrationSweep();
+      _vibrationSweepActive = false;
+      _setGuidance(const CaptureGuidance(text: 'Ready', iconName: 'vibration'));
+    } else {
+      await camera.startVibrationSweep();
+      _vibrationSweepActive = true;
+      _setGuidance(
+        const CaptureGuidance(text: 'Vibration sweep', iconName: 'vibration'),
+      );
+    }
+    notifyListeners();
+  }
+
   SensorSnapshot _fallbackSensorSnapshot() {
     developer.log(
         'forceCapture using fallback pose because sensors are not ready yet',
@@ -194,6 +212,10 @@ class CaptureCoordinator extends ChangeNotifier {
     _cancelAutoFinish();
     await _sensorSub?.cancel();
     await _frameSub?.cancel();
+    if (_vibrationSweepActive) {
+      await camera.stopVibrationSweep();
+      _vibrationSweepActive = false;
+    }
     await sensors.stop();
     await camera.dispose();
     _setState(CaptureState.exporting);
@@ -261,6 +283,11 @@ class CaptureCoordinator extends ChangeNotifier {
 
   void _updatePhaseAndCamera(SensorSnapshot sensor) {
     final coverage = coverageTracker.value.coveragePercent;
+    final wantsUwSample = hasUwCamera &&
+        _activeCamera != CameraLensType.uw &&
+        shots.length >= 10 &&
+        shots.length % 18 == 0 &&
+        coverage >= 25;
     final wantsTeleDetail = hasTeleCamera &&
         coverage >= 97 &&
         coverageTracker.needsDetail(
@@ -280,11 +307,13 @@ class CaptureCoordinator extends ChangeNotifier {
     }
     _phase = nextPhase;
 
-    final desiredCamera = switch (nextPhase) {
-      CapturePhase.basicFill => CameraLensType.main,
-      CapturePhase.qualityUpgrade => CameraLensType.main,
-      CapturePhase.detailLock => CameraLensType.tele,
-    };
+    final desiredCamera = wantsUwSample
+        ? CameraLensType.uw
+        : switch (nextPhase) {
+            CapturePhase.basicFill => CameraLensType.main,
+            CapturePhase.qualityUpgrade => CameraLensType.main,
+            CapturePhase.detailLock => CameraLensType.tele,
+          };
     if (desiredCamera != _activeCamera) {
       unawaited(_switchCamera(desiredCamera));
     }
@@ -317,13 +346,24 @@ class CaptureCoordinator extends ChangeNotifier {
     final commonLuminanceOk = _latestLuminance >= 20 && _latestLuminance <= 248;
     if (!commonLuminanceOk) return;
 
-    final speedLimit = _phase == CapturePhase.detailLock ? 3.0 : 8.0;
+    if (_vibrationSweepActive) {
+      final yawDelta = _yawDeltaFor(_activeCamera, sensor.azimuthDeg);
+      if (yawDelta >= 1.0 &&
+          sensor.angularSpeedDegPerSec < 25 &&
+          _latestSharpness >= 0.32 &&
+          _latestTexture >= 0.04) {
+        unawaited(_fireCapture(sensor, force: false));
+      }
+      return;
+    }
+
+    final speedLimit = _phase == CapturePhase.detailLock ? 4.0 : 11.0;
     if (sensor.angularSpeedDegPerSec >= speedLimit) {
       _steadySince = null;
       return;
     }
     _steadySince ??= now;
-    if (now.difference(_steadySince!) < const Duration(milliseconds: 220)) {
+    if (now.difference(_steadySince!) < const Duration(milliseconds: 140)) {
       return;
     }
 
@@ -341,15 +381,17 @@ class CaptureCoordinator extends ChangeNotifier {
 
     final shouldCapture = switch (_phase) {
       CapturePhase.basicFill => _mainShouldCapture(
-          sensor: sensor,
-          yawDelta: yawDelta,
-          targetNeedsQuality: targetNeedsQuality,
-        ),
+            sensor: sensor,
+            yawDelta: yawDelta,
+            targetNeedsQuality: targetNeedsQuality,
+          ) ||
+          _auxShouldCapture(sensor: sensor, yawDelta: yawDelta),
       CapturePhase.qualityUpgrade => _mainShouldCapture(
-          sensor: sensor,
-          yawDelta: yawDelta,
-          targetNeedsQuality: targetNeedsQuality,
-        ),
+            sensor: sensor,
+            yawDelta: yawDelta,
+            targetNeedsQuality: targetNeedsQuality,
+          ) ||
+          _auxShouldCapture(sensor: sensor, yawDelta: yawDelta),
       CapturePhase.detailLock => hasTeleCamera &&
           _activeCamera == CameraLensType.tele &&
           sensor.angularSpeedDegPerSec < 3 &&
@@ -370,24 +412,35 @@ class CaptureCoordinator extends ChangeNotifier {
     required bool targetNeedsQuality,
   }) {
     return _activeCamera == CameraLensType.main &&
-        sensor.angularSpeedDegPerSec < 8 &&
+        sensor.angularSpeedDegPerSec < 11 &&
         yawDelta > _qualityStepForMode() &&
         (targetNeedsQuality || coverageTracker.value.coveragePercent >= 97) &&
         _latestSharpness >= _mainSharpnessThreshold() &&
-        _latestTexture >= 0.12;
+        _latestTexture >= 0.08;
+  }
+
+  bool _auxShouldCapture({
+    required SensorSnapshot sensor,
+    required double yawDelta,
+  }) {
+    if (_activeCamera != CameraLensType.uw) return false;
+    return sensor.angularSpeedDegPerSec < 9 &&
+        yawDelta > 10 &&
+        _latestSharpness >= 0.38 &&
+        _latestTexture >= 0.06;
   }
 
   double _qualityStepForMode() {
     return switch (mode) {
-      CaptureMode.room => 5,
-      CaptureMode.object => 4,
-      CaptureMode.spherical => 6,
+      CaptureMode.room => 4,
+      CaptureMode.object => 3,
+      CaptureMode.spherical => 5,
     };
   }
 
   double _mainSharpnessThreshold() {
-    if (shots.length < 10) return 0.50;
-    return 0.58;
+    if (shots.length < 10) return 0.42;
+    return 0.48;
   }
 
   double _yawDeltaFor(CameraLensType cameraType, double yaw) {
@@ -465,11 +518,11 @@ class CaptureCoordinator extends ChangeNotifier {
 
   bool _qualityAcceptedFor(CameraLensType cameraType) {
     final lumOk = _latestLuminance >= 20 && _latestLuminance <= 248;
-    final textureThreshold = cameraType == CameraLensType.uw ? 0.10 : 0.12;
+    final textureThreshold = cameraType == CameraLensType.uw ? 0.08 : 0.08;
     final sharpThreshold = switch (cameraType) {
       CameraLensType.uw => 0.45,
       CameraLensType.main => _mainSharpnessThreshold(),
-      CameraLensType.tele => 0.72,
+      CameraLensType.tele => 0.66,
     };
     return lumOk &&
         _latestSharpness >= sharpThreshold &&
@@ -482,6 +535,12 @@ class CaptureCoordinator extends ChangeNotifier {
         text: 'Point at plain wall for detail',
         iconName: 'center_focus_strong',
       ));
+      return;
+    }
+    if (_vibrationSweepActive) {
+      _setGuidance(
+        const CaptureGuidance(text: 'Vibration sweep', iconName: 'vibration'),
+      );
       return;
     }
     if (_recalibratingFocus) {
@@ -734,6 +793,10 @@ class CaptureCoordinator extends ChangeNotifier {
     _cancelAutoFinish();
     _sensorSub?.cancel();
     _frameSub?.cancel();
+    if (_vibrationSweepActive) {
+      unawaited(camera.stopVibrationSweep());
+      _vibrationSweepActive = false;
+    }
     sensors.stop();
     camera.dispose();
     super.dispose();

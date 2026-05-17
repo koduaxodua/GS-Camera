@@ -80,9 +80,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
               left: 16,
               child: SafeArea(
                 child: _GlassButton(
-                  icon: Icons.flash_on,
-                  label: 'Capture now',
-                  onTap: coordinator.forceCapture,
+                  icon: Icons.vibration,
+                  label: 'Experimental vibration sweep',
+                  onTap: coordinator.toggleVibrationSweep,
+                  active: coordinator.vibrationSweepActive,
                 ),
               ),
             ),
@@ -108,10 +109,16 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
               left: 0,
               right: 0,
               child: Center(
-                child: CoverageRing(
-                  state: coverage,
-                  currentYawDeg: coordinator.lastSensor?.azimuthDeg ?? 0,
-                  showRoomBands: coordinator.mode == CaptureMode.room,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    CoverageRing(
+                      state: coverage,
+                      currentYawDeg: coordinator.lastSensor?.azimuthDeg ?? 0,
+                      showRoomBands: coordinator.mode == CaptureMode.room,
+                    ),
+                    _RingCaptureButton(onTap: coordinator.forceCapture),
+                  ],
                 ),
               ),
             ),
@@ -326,11 +333,13 @@ class _GlassButton extends StatelessWidget {
     required this.icon,
     required this.label,
     required this.onTap,
+    this.active = false,
   });
 
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool active;
 
   @override
   Widget build(BuildContext context) {
@@ -339,7 +348,9 @@ class _GlassButton extends StatelessWidget {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
         child: Material(
-          color: Colors.white.withValues(alpha: 0.12),
+          color: active
+              ? Colors.lightGreenAccent.withValues(alpha: 0.22)
+              : Colors.white.withValues(alpha: 0.12),
           child: InkWell(
             onTap: onTap,
             child: Semantics(
@@ -350,6 +361,34 @@ class _GlassButton extends StatelessWidget {
                 child: Icon(icon, color: Colors.white, size: 22),
               ),
             ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RingCaptureButton extends StatelessWidget {
+  const _RingCaptureButton({required this.onTap});
+
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      button: true,
+      label: 'Capture now',
+      child: Material(
+        color: Colors.white,
+        shape: const CircleBorder(),
+        elevation: 8,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: onTap,
+          child: const SizedBox(
+            width: 64,
+            height: 64,
+            child: Icon(Icons.flash_on, color: Colors.black, size: 28),
           ),
         ),
       ),
