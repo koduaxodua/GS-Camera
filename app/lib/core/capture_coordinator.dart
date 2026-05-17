@@ -124,9 +124,12 @@ class CaptureCoordinator extends ChangeNotifier {
   StreamSubscription? _sensorSub;
   StreamSubscription? _frameSub;
   DateTime _lastShotAt = DateTime.fromMillisecondsSinceEpoch(0);
+  DateTime _lastVibrationSweepShotAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime _lastHudNotifyAt = DateTime.fromMillisecondsSinceEpoch(0);
   DateTime? _steadySince;
   DateTime _lastFocusRecalibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
+  double? _lastVibrationSweepYaw;
+  int _vibrationSweepStartShotCount = 0;
   bool _disposing = false;
   bool _switchingCamera = false;
   bool _recalibratingFocus = false;
@@ -176,10 +179,17 @@ class CaptureCoordinator extends ChangeNotifier {
     if (_vibrationSweepActive) {
       await camera.stopVibrationSweep();
       _vibrationSweepActive = false;
+      _lastVibrationSweepYaw = null;
       _setGuidance(const CaptureGuidance(text: 'Ready', iconName: 'vibration'));
     } else {
+      if (_activeCamera != CameraLensType.main) {
+        await _switchCamera(CameraLensType.main);
+      }
       await camera.startVibrationSweep();
       _vibrationSweepActive = true;
+      _vibrationSweepStartShotCount = shots.length;
+      _lastVibrationSweepShotAt = DateTime.now();
+      _lastVibrationSweepYaw = _lastSensor?.azimuthDeg;
       _setGuidance(
         const CaptureGuidance(text: 'Vibration sweep', iconName: 'vibration'),
       );
@@ -343,19 +353,13 @@ class CaptureCoordinator extends ChangeNotifier {
     final now = DateTime.now();
     if (now.difference(_lastShotAt) < _minShotInterval) return;
 
-    final commonLuminanceOk = _latestLuminance >= 20 && _latestLuminance <= 248;
-    if (!commonLuminanceOk) return;
-
     if (_vibrationSweepActive) {
-      final yawDelta = _yawDeltaFor(_activeCamera, sensor.azimuthDeg);
-      if (yawDelta >= 1.0 &&
-          sensor.angularSpeedDegPerSec < 25 &&
-          _latestSharpness >= 0.32 &&
-          _latestTexture >= 0.04) {
-        unawaited(_fireCapture(sensor, force: false));
-      }
+      _maybeFireVibrationSweep(sensor, now);
       return;
     }
+
+    final commonLuminanceOk = _latestLuminance >= 20 && _latestLuminance <= 248;
+    if (!commonLuminanceOk) return;
 
     final speedLimit = _phase == CapturePhase.detailLock ? 4.0 : 11.0;
     if (sensor.angularSpeedDegPerSec >= speedLimit) {
@@ -403,6 +407,41 @@ class CaptureCoordinator extends ChangeNotifier {
 
     if (shouldCapture) {
       unawaited(_fireCapture(sensor, force: false));
+    }
+  }
+
+  void _maybeFireVibrationSweep(SensorSnapshot sensor, DateTime now) {
+    if (_latestLuminance < 6) {
+      _setGuidance(
+        const CaptureGuidance(text: 'Black preview', iconName: 'dark_mode'),
+      );
+      return;
+    }
+    if (shots.length - _vibrationSweepStartShotCount >= 180) {
+      unawaited(camera.stopVibrationSweep());
+      _vibrationSweepActive = false;
+      _setGuidance(const CaptureGuidance(text: 'Sweep paused', iconName: 'stop'));
+      notifyListeners();
+      return;
+    }
+    if (now.difference(_lastVibrationSweepShotAt) <
+        const Duration(milliseconds: 650)) {
+      return;
+    }
+    final lastYaw = _lastVibrationSweepYaw;
+    final yawDelta =
+        lastYaw == null ? 999.0 : _shortestArc(lastYaw, sensor.azimuthDeg);
+    final watchdog = now.difference(_lastVibrationSweepShotAt) >=
+        const Duration(seconds: 5);
+    if (yawDelta >= 0.7 || watchdog) {
+      _lastVibrationSweepYaw = sensor.azimuthDeg;
+      _lastVibrationSweepShotAt = now;
+      developer.log(
+        'vibration_sweep_capture yawDelta=${yawDelta.toStringAsFixed(2)} '
+        'watchdog=$watchdog lum=${_latestLuminance.toStringAsFixed(1)}',
+        name: 'gs_camera.capture',
+      );
+      unawaited(_fireCapture(sensor, force: true));
     }
   }
 
