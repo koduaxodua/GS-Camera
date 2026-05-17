@@ -128,7 +128,6 @@ class Exporter {
     required int total,
   }) async* {
     var done = 0;
-    await Directory('${destination.path}/sparse').create(recursive: true);
     // Use sequential 0001.jpg, 0002.jpg, ... numbering on the destination
     // side so postshot sees a contiguous image sequence even when dedup
     // skipped capture indexes mid-session.
@@ -219,7 +218,6 @@ class Exporter {
     var done = 0;
     var seq = 0;
     try {
-      encoder.addArchiveFile(ArchiveFile('sparse/', 0, const []));
       for (final s in shots) {
         seq++;
         final padded = seq.toString().padLeft(4, '0');
@@ -337,7 +335,8 @@ class Exporter {
   static const _readmeBody = '''
 GS Camera session — for postshot
 
-Drop this entire folder into postshot as an "image sequence" project.
+Drop this entire folder into postshot as an image sequence project.
+In postshot, use Camera Poses = Compute From Images.
 - Frames are JPEG, sequential, EXIF preserved.
 - Camera exposure/focus/white balance were locked across all frames.
 - session.json contains sensor metadata (azimuth/elevation/roll, sharpness

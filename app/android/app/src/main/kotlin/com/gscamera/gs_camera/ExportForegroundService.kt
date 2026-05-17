@@ -91,7 +91,6 @@ class ExportForegroundService : Service() {
             if (tmpFile.exists()) tmpFile.delete()
             ZipOutputStream(FileOutputStream(tmpFile)).use { zip ->
                 val exportedShots = JSONArray()
-                addZipDirectory(zip, "sparse/")
                 for (i in 0 until shots.length()) {
                     val shot = shots.getJSONObject(i)
                     val src = File(shot.getString("path"))
@@ -136,7 +135,6 @@ class ExportForegroundService : Service() {
         } else {
             val outDir = File(outputPath)
             outDir.mkdirs()
-            File(outDir, "sparse").mkdirs()
             val exportedShots = JSONArray()
             for (i in 0 until shots.length()) {
                 val shot = shots.getJSONObject(i)
@@ -184,7 +182,6 @@ class ExportForegroundService : Service() {
         val sessionPath = downloadsRelativePath(outputPath)
         val exportedShots = JSONArray()
         var done = 0
-        writeDownloadBytes("$sessionPath/sparse", ".keep", "application/octet-stream") {}
         for (i in 0 until shots.length()) {
             val shot = shots.getJSONObject(i)
             val src = File(shot.getString("path"))
@@ -315,7 +312,6 @@ class ExportForegroundService : Service() {
     ): Int {
         var done = doneStart
         val exportedShots = JSONArray()
-        addZipDirectory(zip, "sparse/")
         for (i in 0 until shots.length()) {
             val shot = shots.getJSONObject(i)
             val src = File(shot.getString("path"))
@@ -488,6 +484,7 @@ class ExportForegroundService : Service() {
 GS Camera session - for postshot
 
 Drop this entire folder into postshot as an image sequence project.
+In postshot, use Camera Poses = Compute From Images.
 - Frames are JPEG, sequential, EXIF preserved.
 - Camera exposure/focus/white balance were locked across all frames.
 - session.json contains sensor metadata.

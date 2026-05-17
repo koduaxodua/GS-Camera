@@ -182,7 +182,6 @@ class _ReviewScreenState extends State<ReviewScreen> {
       'pro_export': false,
       'coverage_map': widget.coverageMap,
       'per_camera_coverage': widget.perCameraCoverage,
-      'colmap_sparse_stub': 'not_generated',
       'sdf_export_stub': 'disabled',
     };
   }
