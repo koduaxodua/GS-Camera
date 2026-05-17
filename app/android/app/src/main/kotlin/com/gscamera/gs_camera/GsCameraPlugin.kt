@@ -220,7 +220,8 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
                 result.success(openExportLocation(ctx, path))
             }
             "startVibrationSweep" -> {
-                startVibrationSweep(ctx)
+                val pattern = call.argument<Int>("pattern_index") ?: 0
+                startVibrationSweep(ctx, pattern)
                 result.success(null)
             }
             "stopVibrationSweep" -> {
@@ -231,16 +232,22 @@ class GsCameraPlugin : FlutterPlugin, ActivityAware,
         }
     }
 
-    private fun startVibrationSweep(ctx: Context) {
-        val timings = longArrayOf(0, 90, 18, 90, 18, 130, 24)
+    private fun startVibrationSweep(ctx: Context, pattern: Int) {
+        val timings = when (pattern.floorMod(3)) {
+            1 -> longArrayOf(0, 180, 24, 180, 24, 240, 36)
+            2 -> longArrayOf(0, 320, 45, 120, 24, 320, 45)
+            else -> longArrayOf(0, 90, 18, 90, 18, 130, 24)
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val amplitudes = intArrayOf(0, 255, 0, 255, 0, 255, 0)
+            val amplitudes = IntArray(timings.size) { i -> if (i % 2 == 0) 0 else 255 }
             vibrator(ctx)?.vibrate(VibrationEffect.createWaveform(timings, amplitudes, 1))
         } else {
             @Suppress("DEPRECATION")
             vibrator(ctx)?.vibrate(timings, 1)
         }
     }
+
+    private fun Int.floorMod(divisor: Int): Int = ((this % divisor) + divisor) % divisor
 
     private fun stopVibrationSweep(ctx: Context) {
         vibrator(ctx)?.cancel()

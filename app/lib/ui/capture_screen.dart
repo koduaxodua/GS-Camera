@@ -96,7 +96,10 @@ class _CaptureScreenState extends ConsumerState<CaptureScreen>
                   children: [
                     _CoveragePill(percent: coverage.coveragePercent),
                     const SizedBox(height: 8),
-                    _ShotPill(count: coordinator.shots.length),
+                    _ShotPill(
+                      total: coordinator.shots.length,
+                      kept: coordinator.keptCount,
+                    ),
                     const SizedBox(height: 8),
                     const MlStatusBadge(),
                   ],
@@ -423,28 +426,29 @@ class _CoveragePill extends StatelessWidget {
 }
 
 class _ShotPill extends StatelessWidget {
-  const _ShotPill({required this.count});
+  const _ShotPill({required this.total, required this.kept});
 
-  final int count;
+  final int total;
+  final int kept;
 
   @override
   Widget build(BuildContext context) {
     return AnimatedSwitcher(
       duration: const Duration(milliseconds: 180),
       child: Container(
-        key: ValueKey(count),
+        key: ValueKey('$total/$kept'),
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
-          color: count > 0
+          color: total > 0
               ? Colors.greenAccent.withValues(alpha: 0.22)
               : Colors.black.withValues(alpha: 0.5),
           borderRadius: BorderRadius.circular(18),
           border: Border.all(
-            color: count > 0 ? Colors.greenAccent : Colors.white24,
+            color: total > 0 ? Colors.greenAccent : Colors.white24,
           ),
         ),
         child: Text(
-          '$count photos',
+          kept == total ? '$total photos' : '$kept kept / $total',
           style: const TextStyle(
             color: Colors.white,
             fontSize: 15,

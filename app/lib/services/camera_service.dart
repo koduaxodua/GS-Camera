@@ -55,8 +55,11 @@ class CameraService {
     await _method.invokeMethod<void>('dispose');
   }
 
-  Future<void> startVibrationSweep() async {
-    await _method.invokeMethod<void>('startVibrationSweep');
+  Future<void> startVibrationSweep({int patternIndex = 0}) async {
+    await _method.invokeMethod<void>(
+      'startVibrationSweep',
+      {'pattern_index': patternIndex},
+    );
   }
 
   Future<void> stopVibrationSweep() async {

@@ -130,6 +130,7 @@ class CaptureCoordinator extends ChangeNotifier {
   DateTime _lastFocusRecalibrationAt = DateTime.fromMillisecondsSinceEpoch(0);
   double? _lastVibrationSweepYaw;
   int _vibrationSweepStartShotCount = 0;
+  int _vibrationSweepPatternIndex = 0;
   bool _disposing = false;
   bool _switchingCamera = false;
   bool _recalibratingFocus = false;
@@ -185,7 +186,8 @@ class CaptureCoordinator extends ChangeNotifier {
       if (_activeCamera != CameraLensType.main) {
         await _switchCamera(CameraLensType.main);
       }
-      await camera.startVibrationSweep();
+      _vibrationSweepPatternIndex = 0;
+      await camera.startVibrationSweep(patternIndex: _vibrationSweepPatternIndex);
       _vibrationSweepActive = true;
       _vibrationSweepStartShotCount = shots.length;
       _lastVibrationSweepShotAt = DateTime.now();
@@ -433,7 +435,13 @@ class CaptureCoordinator extends ChangeNotifier {
         lastYaw == null ? 999.0 : _shortestArc(lastYaw, sensor.azimuthDeg);
     final watchdog = now.difference(_lastVibrationSweepShotAt) >=
         const Duration(seconds: 5);
-    if (yawDelta >= 0.7 || watchdog) {
+    if (watchdog && yawDelta < 1.0) {
+      _vibrationSweepPatternIndex = (_vibrationSweepPatternIndex + 1) % 3;
+      unawaited(
+        camera.startVibrationSweep(patternIndex: _vibrationSweepPatternIndex),
+      );
+    }
+    if (yawDelta >= 3.0 || watchdog) {
       _lastVibrationSweepYaw = sensor.azimuthDeg;
       _lastVibrationSweepShotAt = now;
       developer.log(
@@ -684,7 +692,17 @@ class CaptureCoordinator extends ChangeNotifier {
     final kept = <PhotoMeta>[];
     await embedder.warmup();
     if (!embedder.isReady) return;
+    final deadline = DateTime.now().add(const Duration(seconds: 90));
     for (final meta in shots.where((p) => p.keptInExport)) {
+      if (DateTime.now().isAfter(deadline)) {
+        developer.log('post_dedup_timeout kept=${kept.length}',
+            name: 'gs_camera.capture');
+        break;
+      }
+      if (meta.embedding != null) {
+        kept.add(meta);
+        continue;
+      }
       final file = File(meta.absolutePath);
       if (!await file.exists()) continue;
       final embedding = await embedder.embedJpeg(await file.readAsBytes());
@@ -721,12 +739,16 @@ class CaptureCoordinator extends ChangeNotifier {
       } else {
         kept.add(meta);
       }
-      await Future<void>.delayed(const Duration(milliseconds: 75));
+      if (DateTime.now().millisecondsSinceEpoch % 4 == 0) {
+        await Future<void>.delayed(const Duration(milliseconds: 12));
+      }
     }
   }
 
   void _scheduleLiveDedup(PhotoMeta meta) {
-    if (shots.length < 5 || _liveDedupRunning || !meta.keptInExport) return;
+    if (_liveDedupRunning || !meta.keptInExport) return;
+    final recentKept = shots.where((p) => p.keptInExport).length;
+    if (recentKept < 3) return;
     _liveDedupRunning = true;
     unawaited(() async {
       await Future<void>.delayed(const Duration(milliseconds: 900));
